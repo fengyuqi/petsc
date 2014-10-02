@@ -1,4 +1,5 @@
 import config.package
+import os
 
 class Configure(config.package.GNUPackage):
   def __init__(self, framework):
@@ -10,6 +11,12 @@ class Configure(config.package.GNUPackage):
     self.downloadonWindows = 1
     return
 
+  def getSearchDirectories(self):
+    yield '/usr'
+    yield os.path.join('/usr','local')
+    yield os.path.join('/opt','local')
+    return
+
   def formGNUConfigureArgs(self):
     args = config.package.GNUPackage.formGNUConfigureArgs(self)
     # Don't require x libraries since they may not always be available or hwloc may not be able to locate them on Apple
@@ -18,17 +25,29 @@ class Configure(config.package.GNUPackage):
     return args
 
   def configure(self):
-    '''Download by default and just continue if it does not build '''
+    '''Searches for hwloc and if not found downloads by default and just continue if it does not build '''
+    if self.framework.clArgDB.has_key('with-hwloc') and not self.framework.argDB['with-hwloc']:
+      self.framework.logPrint("Not using hwloc on user request\n")
+      return
     if self.framework.clArgDB.has_key('download-hwloc') and not self.framework.argDB['download-hwloc']:
       self.framework.logPrint("Not downloading hwloc on user request\n")
       return
+    # if PETSc libraries start using hwloc directly then we should remove the following if test
     if self.argDB['with-batch']:
       return
-    self.framework.argDB['download-hwloc'] = 1
+    self.framework.argDB['with-hwloc'] = 1
     try:
       config.package.GNUPackage.configure(self)
     except:
       self.found = 0
+    if not self.found:
+      self.framework.argDB['download-hwloc'] = 1
+      try:
+        config.package.GNUPackage.configure(self)
+      except:
+        self.found = 0
+    if self.found and self.directory:
+      self.getExecutable('lstopo',    path=os.path.join(self.directory,'bin'), getFullPath = 1)
 
 
 
