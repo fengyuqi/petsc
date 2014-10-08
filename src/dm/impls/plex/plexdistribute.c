@@ -543,22 +543,29 @@ PetscErrorCode DMPlexDistributeOwnership(DM dm, PetscSection rootSection, IS *ro
 
 .seealso: DMPlexDistributeOwnership()
 @*/
-PetscErrorCode DMPlexCreateOverlap(DM dm, PetscSection rootSection, IS rootrank, PetscSection leafSection, IS leafrank, PetscSection ovRootSection, PetscSFNode **ovRootPoints, PetscSection ovLeafSection, PetscSFNode **ovLeafPoints)
+PetscErrorCode DMPlexCreateOverlap(DM dm, PetscSection rootSection, IS rootrank, PetscSection leafSection, IS leafrank, PetscSF *overlapSF)
 {
+  MPI_Comm           comm;
   DMLabel            ovAdjByRank; /* A DMLabel containing all points adjacent to shared points, separated by rank (value in label) */
   PetscSF            sfPoint, sfProc;
   IS                 valueIS;
+  DMLabel            ovLeafLabel;
   const PetscSFNode *remote;
   const PetscInt    *local;
   const PetscInt    *nrank, *rrank, *neighbors;
+  PetscSFNode       *ovRootPoints, *ovLeafPoints, *remotePoints;
+  PetscSection       ovRootSection, ovLeafSection;
   PetscInt          *adj = NULL;
   PetscInt           pStart, pEnd, p, sStart, sEnd, nleaves, l, numNeighbors, n, ovSize;
+  PetscInt           idx, numRemote;
   PetscMPIInt        rank, numProcs;
+  PetscBool          flg;
   PetscErrorCode     ierr;
 
   PetscFunctionBegin;
-  ierr = MPI_Comm_size(PetscObjectComm((PetscObject) dm), &numProcs);CHKERRQ(ierr);
-  ierr = MPI_Comm_rank(PetscObjectComm((PetscObject) dm), &rank);CHKERRQ(ierr);
+  ierr = PetscObjectGetComm((PetscObject) dm, &comm);CHKERRQ(ierr);
+  ierr = MPI_Comm_size(comm, &numProcs);CHKERRQ(ierr);
+  ierr = MPI_Comm_rank(comm, &rank);CHKERRQ(ierr);
   ierr = DMGetPointSF(dm, &sfPoint);CHKERRQ(ierr);
   ierr = DMPlexGetChart(dm, &pStart, &pEnd);CHKERRQ(ierr);
   ierr = PetscSectionGetChart(leafSection, &sStart, &sEnd);CHKERRQ(ierr);
@@ -606,11 +613,14 @@ PetscErrorCode DMPlexCreateOverlap(DM dm, PetscSection rootSection, IS rootrank,
   ierr = PetscFree(adj);CHKERRQ(ierr);
   ierr = ISRestoreIndices(rootrank, &rrank);CHKERRQ(ierr);
   ierr = ISRestoreIndices(leafrank, &nrank);CHKERRQ(ierr);
-  {
+  ierr = PetscOptionsHasName(((PetscObject) dm)->prefix, "-overlap_view", &flg);CHKERRQ(ierr);
+  if (flg) {
     ierr = PetscViewerASCIISynchronizedAllow(PETSC_VIEWER_STDOUT_WORLD, PETSC_TRUE);CHKERRQ(ierr);
     ierr = DMLabelView(ovAdjByRank, PETSC_VIEWER_STDOUT_WORLD);CHKERRQ(ierr);
   }
   /* Convert to (point, rank) and use actual owners */
+  ierr = PetscSectionCreate(comm, &ovRootSection);CHKERRQ(ierr);
+  ierr = PetscObjectSetName((PetscObject) ovRootSection, "Overlap Root Section");CHKERRQ(ierr);
   ierr = PetscSectionSetChart(ovRootSection, 0, numProcs);CHKERRQ(ierr);
   ierr = DMLabelGetValueIS(ovAdjByRank, &valueIS);CHKERRQ(ierr);
   ierr = ISGetLocalSize(valueIS, &numNeighbors);CHKERRQ(ierr);
@@ -623,7 +633,7 @@ PetscErrorCode DMPlexCreateOverlap(DM dm, PetscSection rootSection, IS rootrank,
   }
   ierr = PetscSectionSetUp(ovRootSection);CHKERRQ(ierr);
   ierr = PetscSectionGetStorageSize(ovRootSection, &ovSize);CHKERRQ(ierr);
-  ierr = PetscMalloc1(ovSize, ovRootPoints);CHKERRQ(ierr);
+  ierr = PetscMalloc1(ovSize, &ovRootPoints);CHKERRQ(ierr);
   ierr = PetscSFGetGraph(sfPoint, NULL, &nleaves, &local, &remote);CHKERRQ(ierr);
   for (n = 0; n < numNeighbors; ++n) {
     IS              pointIS;
@@ -636,8 +646,8 @@ PetscErrorCode DMPlexCreateOverlap(DM dm, PetscSection rootSection, IS rootrank,
     ierr = ISGetIndices(pointIS, &points);CHKERRQ(ierr);
     for (p = 0; p < numPoints; ++p) {
       ierr = PetscFindInt(points[p], nleaves, local, &l);CHKERRQ(ierr);
-      if (l >= 0) {(*ovRootPoints)[off+p] = remote[l];}
-      else        {(*ovRootPoints)[off+p].index = points[p]; (*ovRootPoints)[off+p].rank = rank;}
+      if (l >= 0) {ovRootPoints[off+p] = remote[l];}
+      else        {ovRootPoints[off+p].index = points[p]; ovRootPoints[off+p].rank = rank;}
     }
     ierr = ISRestoreIndices(pointIS, &points);CHKERRQ(ierr);
     ierr = ISDestroy(&pointIS);CHKERRQ(ierr);
@@ -647,12 +657,155 @@ PetscErrorCode DMPlexCreateOverlap(DM dm, PetscSection rootSection, IS rootrank,
   ierr = DMLabelDestroy(&ovAdjByRank);CHKERRQ(ierr);
   /* Make process SF */
   ierr = DMPlexCreateTwoSidedProcessSF(dm, sfPoint, rootSection, rootrank, leafSection, leafrank, NULL, &sfProc);CHKERRQ(ierr);
-  {
+  if (flg) {
     ierr = PetscSFView(sfProc, PETSC_VIEWER_STDOUT_WORLD);CHKERRQ(ierr);
   }
   /* Communicate overlap */
-  ierr = DMPlexDistributeData(dm, sfProc, ovRootSection, MPIU_2INT, (void *) *ovRootPoints, ovLeafSection, (void **) ovLeafPoints);CHKERRQ(ierr);
+  ierr = PetscSectionCreate(comm, &ovLeafSection);CHKERRQ(ierr);
+  ierr = PetscObjectSetName((PetscObject) ovLeafSection, "Overlap Leaf Section");CHKERRQ(ierr);
+  ierr = DMPlexDistributeData(dm, sfProc, ovRootSection, MPIU_2INT, ovRootPoints, ovLeafSection, (void**) &ovLeafPoints);CHKERRQ(ierr);
+  /* Filter remote contributions (ovLeafPoints) into the overlapSF */
+  ierr = DMLabelCreate("ovLeafs", &ovLeafLabel);CHKERRQ(ierr);
+  ierr = PetscSectionGetStorageSize(ovLeafSection, &ovSize);CHKERRQ(ierr);
+  for (p = 0; p < ovSize; p++) {
+    /* Don't import points from yourself */
+    if (ovLeafPoints[p].rank == rank) continue;
+    ierr = DMLabelSetValue(ovLeafLabel, ovLeafPoints[p].index, ovLeafPoints[p].rank);CHKERRQ(ierr);
+  }
+  /* Don't import points already in the pointSF */
+  for (l = 0; l < nleaves; ++l) {
+    ierr = DMLabelClearValue(ovLeafLabel, remote[l].index, remote[l].rank);CHKERRQ(ierr);
+  }
+  for (numRemote = 0, n = 0; n < numProcs; ++n) {
+    PetscInt numPoints;
+    ierr = DMLabelGetStratumSize(ovLeafLabel, n, &numPoints);CHKERRQ(ierr);
+    numRemote += numPoints;
+  }
+  ierr = PetscMalloc1(numRemote, &remotePoints);CHKERRQ(ierr);
+  for (idx = 0, n = 0; n < numProcs; ++n) {
+    IS remoteRootIS;
+    PetscInt numPoints;
+    const PetscInt *remoteRoots;
+    ierr = DMLabelGetStratumSize(ovLeafLabel, n, &numPoints);CHKERRQ(ierr);
+    if (numPoints <= 0) continue;
+    ierr = DMLabelGetStratumIS(ovLeafLabel, n, &remoteRootIS);CHKERRQ(ierr);
+    ierr = ISGetIndices(remoteRootIS, &remoteRoots);CHKERRQ(ierr);
+    for (p = 0; p < numPoints; p++) {
+      remotePoints[idx].index = remoteRoots[p];
+      remotePoints[idx].rank = n;
+      idx++;
+    }
+    ierr = ISRestoreIndices(remoteRootIS, &remoteRoots);CHKERRQ(ierr);
+  }
+  ierr = PetscSFCreate(PetscObjectComm((PetscObject) dm), overlapSF);CHKERRQ(ierr);
+  ierr = PetscObjectSetName((PetscObject) *overlapSF, "Overlap SF");CHKERRQ(ierr);
+  ierr = PetscSFSetFromOptions(*overlapSF);CHKERRQ(ierr);
+  ierr = PetscSFSetGraph(*overlapSF, pEnd-pStart, numRemote, NULL, PETSC_OWN_POINTER, remotePoints, PETSC_OWN_POINTER);CHKERRQ(ierr);
+  if (flg) {
+    ierr = PetscPrintf(comm, "Overlap SF\n");CHKERRQ(ierr);
+    ierr = PetscSFView(*overlapSF, PETSC_VIEWER_STDOUT_WORLD);CHKERRQ(ierr);
+  }
+  /* Clean up */
   ierr = PetscSFDestroy(&sfProc);CHKERRQ(ierr);
+  ierr = PetscFree(ovRootPoints);CHKERRQ(ierr);
+  ierr = PetscSectionDestroy(&ovRootSection);CHKERRQ(ierr);
+  ierr = PetscFree(ovLeafPoints);CHKERRQ(ierr);
+  ierr = PetscSectionDestroy(&ovLeafSection);CHKERRQ(ierr);
+  PetscFunctionReturn(0);
+}
+
+#undef __FUNCT__
+#define __FUNCT__ "DMPlexCreateOverlapMigrationSF"
+PetscErrorCode DMPlexCreateOverlapMigrationSF(DM dm, PetscSF overlapSF, PetscSF *migrationSF)
+{
+  MPI_Comm           comm;
+  PetscMPIInt        rank, numProcs;
+  PetscInt           d, dim, p, pStart, pEnd, nroots, nleaves, newLeaves, point, numSharedPoints;
+  PetscInt          *pointDepths, *remoteDepths, *ilocal;
+  PetscInt          *depthRecv, *depthShift, *depthIdx;
+  PetscSFNode       *iremote;
+  PetscSF            pointSF;
+  const PetscInt    *sharedLocal;
+  const PetscSFNode *overlapRemote, *sharedRemote;
+  PetscErrorCode     ierr;
+
+  PetscFunctionBegin;
+  PetscValidHeaderSpecific(dm, DM_CLASSID, 1);
+  ierr = PetscObjectGetComm((PetscObject)dm, &comm);CHKERRQ(ierr);
+  ierr = MPI_Comm_rank(comm, &rank);CHKERRQ(ierr);
+  ierr = MPI_Comm_size(comm, &numProcs);CHKERRQ(ierr);
+  ierr = DMGetDimension(dm, &dim);CHKERRQ(ierr);
+
+  /* Before building the migration SF we need to know the new stratum offsets */
+  ierr = PetscSFGetGraph(overlapSF, &nroots, &nleaves, NULL, &overlapRemote);CHKERRQ(ierr);
+  ierr = PetscMalloc2(nroots, &pointDepths, nleaves, &remoteDepths);CHKERRQ(ierr);
+  for (d=0; d<dim+1; d++) {
+    ierr = DMPlexGetDepthStratum(dm, d, &pStart, &pEnd);CHKERRQ(ierr);
+    for (p=pStart; p<pEnd; p++) pointDepths[p] = d;
+  }
+  for (p=0; p<nleaves; p++) remoteDepths[p] = -1;
+  ierr = PetscSFBcastBegin(overlapSF, MPIU_INT, pointDepths, remoteDepths);CHKERRQ(ierr);
+  ierr = PetscSFBcastEnd(overlapSF, MPIU_INT, pointDepths, remoteDepths);CHKERRQ(ierr);
+
+  /* Count recevied points in each stratum and compute the internal strata shift */
+  ierr = PetscMalloc3(dim+1, &depthRecv, dim+1, &depthShift, dim+1, &depthIdx);CHKERRQ(ierr);
+  for (d=0; d<dim+1; d++) depthRecv[d]=0;
+  for (p=0; p<nleaves; p++) depthRecv[remoteDepths[p]]++;
+  depthShift[dim] = 0;
+  for (d=0; d<dim; d++) depthShift[d] = depthRecv[dim];
+  for (d=1; d<dim; d++) depthShift[d] += depthRecv[0];
+  for (d=dim-2; d>0; d--) depthShift[d] += depthRecv[d+1];
+  for (d=0; d<dim+1; d++) {
+    ierr = DMPlexGetDepthStratum(dm, d, &pStart, &pEnd);CHKERRQ(ierr);
+    depthIdx[d] = pStart + depthShift[d];
+  }
+
+  /* Form the overlap SF build an SF that describes the full overlap migration SF */
+  ierr = DMPlexGetChart(dm, &pStart, &pEnd);CHKERRQ(ierr);
+  newLeaves = pEnd - pStart + nleaves;
+  ierr = PetscMalloc2(newLeaves, &ilocal, newLeaves, &iremote);CHKERRQ(ierr);
+  /* First map local points to themselves */
+  for (d=0; d<dim+1; d++) {
+    ierr = DMPlexGetDepthStratum(dm, d, &pStart, &pEnd);CHKERRQ(ierr);
+    for (p=pStart; p<pEnd; p++) {
+      point = p + depthShift[d];
+      ilocal[point] = point;
+      iremote[point].index = p;
+      iremote[point].rank = rank;
+      depthIdx[d]++;
+    }
+  }
+
+  /* Add in the remote roots for currently shared points */
+  ierr = DMGetPointSF(dm, &pointSF);CHKERRQ(ierr);
+  ierr = PetscSFGetGraph(pointSF, NULL, &numSharedPoints, &sharedLocal, &sharedRemote);CHKERRQ(ierr);
+  for (d=0; d<dim+1; d++) {
+    ierr = DMPlexGetDepthStratum(dm, d, &pStart, &pEnd);CHKERRQ(ierr);
+    for (p=0; p<numSharedPoints; p++) {
+      if (pStart <= sharedLocal[p] && sharedLocal[p] < pEnd) {
+        point = sharedLocal[p] + depthShift[d];
+        iremote[point].index = sharedRemote[p].index;
+        iremote[point].rank = sharedRemote[p].rank;
+      }
+    }
+  }
+
+  /* Now add the incoming overlap points */
+  for (p=0; p<nleaves; p++) {
+    point = depthIdx[remoteDepths[p]];
+    ilocal[point] = point;
+    iremote[point].index = overlapRemote[p].index;
+    iremote[point].rank = overlapRemote[p].rank;
+    depthIdx[remoteDepths[p]]++;
+  }
+
+  ierr = PetscSFCreate(comm, migrationSF);CHKERRQ(ierr);
+  ierr = PetscObjectSetName((PetscObject) *migrationSF, "Overlap Migration SF");CHKERRQ(ierr);
+  ierr = PetscSFSetFromOptions(*migrationSF);CHKERRQ(ierr);
+  ierr = DMPlexGetChart(dm, &pStart, &pEnd);CHKERRQ(ierr);
+  ierr = PetscSFSetGraph(*migrationSF, pEnd-pStart, newLeaves, ilocal, PETSC_OWN_POINTER, iremote, PETSC_OWN_POINTER);CHKERRQ(ierr);
+
+  ierr = PetscFree3(depthRecv, depthShift, depthIdx);CHKERRQ(ierr);
   PetscFunctionReturn(0);
 }
 
@@ -796,6 +949,334 @@ PetscErrorCode DMPlexDistributeData(DM dm, PetscSF pointSF, PetscSection origina
 }
 
 #undef __FUNCT__
+#define __FUNCT__ "DMPlexDistributeCones"
+PetscErrorCode DMPlexDistributeCones(DM dm, PetscSF migrationSF, ISLocalToGlobalMapping renumbering, DM dmParallel)
+{
+  DM_Plex               *pmesh   = (DM_Plex*) (dmParallel)->data;
+  MPI_Comm               comm;
+  PetscSF                coneSF;
+  PetscSection           originalConeSection, newConeSection;
+  PetscInt              *remoteOffsets, *cones, *newCones, newConesSize;
+  PetscBool              flg;
+  PetscErrorCode         ierr;
+
+  PetscFunctionBegin;
+  PetscValidHeaderSpecific(dm, DM_CLASSID, 1);
+  PetscValidPointer(dmParallel,4);
+  ierr = PetscLogEventBegin(DMPLEX_DistributeCones,dm,0,0,0);CHKERRQ(ierr);
+
+  /* Distribute cone section */
+  ierr = PetscObjectGetComm((PetscObject)dm, &comm);CHKERRQ(ierr);
+  ierr = DMPlexGetConeSection(dm, &originalConeSection);CHKERRQ(ierr);
+  ierr = DMPlexGetConeSection(dmParallel, &newConeSection);CHKERRQ(ierr);
+  ierr = PetscSFDistributeSection(migrationSF, originalConeSection, &remoteOffsets, newConeSection);CHKERRQ(ierr);
+  ierr = DMSetUp(dmParallel);CHKERRQ(ierr);
+  {
+    PetscInt pStart, pEnd, p;
+
+    ierr = PetscSectionGetChart(newConeSection, &pStart, &pEnd);CHKERRQ(ierr);
+    for (p = pStart; p < pEnd; ++p) {
+      PetscInt coneSize;
+      ierr               = PetscSectionGetDof(newConeSection, p, &coneSize);CHKERRQ(ierr);
+      pmesh->maxConeSize = PetscMax(pmesh->maxConeSize, coneSize);
+    }
+  }
+  /* Communicate and renumber cones */
+  ierr = PetscSFCreateSectionSF(migrationSF, originalConeSection, remoteOffsets, newConeSection, &coneSF);CHKERRQ(ierr);
+  ierr = DMPlexGetCones(dm, &cones);CHKERRQ(ierr);
+  ierr = DMPlexGetCones(dmParallel, &newCones);CHKERRQ(ierr);
+  ierr = PetscSFBcastBegin(coneSF, MPIU_INT, cones, newCones);CHKERRQ(ierr);
+  ierr = PetscSFBcastEnd(coneSF, MPIU_INT, cones, newCones);CHKERRQ(ierr);
+  ierr = PetscSectionGetStorageSize(newConeSection, &newConesSize);CHKERRQ(ierr);
+  ierr = ISGlobalToLocalMappingApplyBlock(renumbering, IS_GTOLM_MASK, newConesSize, newCones, NULL, newCones);CHKERRQ(ierr);
+  ierr = PetscOptionsHasName(((PetscObject) dm)->prefix, "-cones_view", &flg);CHKERRQ(ierr);
+  if (flg) {
+    ierr = PetscPrintf(comm, "Serial Cone Section:\n");CHKERRQ(ierr);
+    ierr = PetscSectionView(originalConeSection, PETSC_VIEWER_STDOUT_WORLD);CHKERRQ(ierr);
+    ierr = PetscPrintf(comm, "Parallel Cone Section:\n");CHKERRQ(ierr);
+    ierr = PetscSectionView(newConeSection, PETSC_VIEWER_STDOUT_WORLD);CHKERRQ(ierr);
+    ierr = PetscSFView(coneSF, NULL);CHKERRQ(ierr);
+  }
+  ierr = DMPlexGetConeOrientations(dm, &cones);CHKERRQ(ierr);
+  ierr = DMPlexGetConeOrientations(dmParallel, &newCones);CHKERRQ(ierr);
+  ierr = PetscSFBcastBegin(coneSF, MPIU_INT, cones, newCones);CHKERRQ(ierr);
+  ierr = PetscSFBcastEnd(coneSF, MPIU_INT, cones, newCones);CHKERRQ(ierr);
+  ierr = PetscSFDestroy(&coneSF);CHKERRQ(ierr);
+  ierr = PetscLogEventEnd(DMPLEX_DistributeCones,dm,0,0,0);CHKERRQ(ierr);
+  /* Create supports and stratify sieve */
+  {
+    PetscInt pStart, pEnd;
+
+    ierr = PetscSectionGetChart(pmesh->coneSection, &pStart, &pEnd);CHKERRQ(ierr);
+    ierr = PetscSectionSetChart(pmesh->supportSection, pStart, pEnd);CHKERRQ(ierr);
+  }
+  ierr = DMPlexSymmetrize(dmParallel);CHKERRQ(ierr);
+  ierr = DMPlexStratify(dmParallel);CHKERRQ(ierr);
+  PetscFunctionReturn(0);
+}
+
+#undef __FUNCT__
+#define __FUNCT__ "DMPlexDistributeCoordinates"
+PetscErrorCode DMPlexDistributeCoordinates(DM dm, PetscSF migrationSF, DM dmParallel)
+{
+  MPI_Comm         comm;
+  PetscSection     originalCoordSection, newCoordSection;
+  Vec              originalCoordinates, newCoordinates;
+  PetscInt         bs;
+  const char      *name;
+  const PetscReal *maxCell, *L;
+  PetscErrorCode   ierr;
+
+  PetscFunctionBegin;
+  PetscValidHeaderSpecific(dm, DM_CLASSID, 1);
+  PetscValidPointer(dmParallel, 3);
+
+  ierr = PetscObjectGetComm((PetscObject)dm, &comm);CHKERRQ(ierr);
+  ierr = DMGetCoordinateSection(dm, &originalCoordSection);CHKERRQ(ierr);
+  ierr = DMGetCoordinateSection(dmParallel, &newCoordSection);CHKERRQ(ierr);
+  ierr = DMGetCoordinatesLocal(dm, &originalCoordinates);CHKERRQ(ierr);
+  if (originalCoordinates) {
+    ierr = VecCreate(comm, &newCoordinates);CHKERRQ(ierr);
+    ierr = PetscObjectGetName((PetscObject) originalCoordinates, &name);CHKERRQ(ierr);
+    ierr = PetscObjectSetName((PetscObject) newCoordinates, name);CHKERRQ(ierr);
+
+    ierr = DMPlexDistributeField(dm, migrationSF, originalCoordSection, originalCoordinates, newCoordSection, newCoordinates);CHKERRQ(ierr);
+    ierr = DMSetCoordinatesLocal(dmParallel, newCoordinates);CHKERRQ(ierr);
+    ierr = VecGetBlockSize(originalCoordinates, &bs);CHKERRQ(ierr);
+    ierr = VecSetBlockSize(newCoordinates, bs);CHKERRQ(ierr);
+    ierr = VecDestroy(&newCoordinates);CHKERRQ(ierr);
+  }
+  ierr = DMGetPeriodicity(dm, &maxCell, &L);CHKERRQ(ierr);
+  if (L) {ierr = DMSetPeriodicity(dmParallel, maxCell, L);CHKERRQ(ierr);}
+  PetscFunctionReturn(0);
+}
+
+#undef __FUNCT__
+#define __FUNCT__ "DMPlexDistributeLabels"
+PetscErrorCode DMPlexDistributeLabels(DM dm, PetscSF migrationSF, DM dmParallel)
+{
+  MPI_Comm       comm;
+  PetscMPIInt    rank;
+  PetscInt       numLabels, l;
+  PetscErrorCode ierr;
+
+  PetscFunctionBegin;
+  PetscValidHeaderSpecific(dm, DM_CLASSID, 1);
+  PetscValidHeaderSpecific(dm, DM_CLASSID, 3);
+  ierr = PetscLogEventBegin(DMPLEX_DistributeLabels,dm,0,0,0);CHKERRQ(ierr);
+  ierr = PetscObjectGetComm((PetscObject)dm, &comm);CHKERRQ(ierr);
+  ierr = MPI_Comm_rank(comm, &rank);CHKERRQ(ierr);
+
+  /* Bcast number of labels */
+  ierr = DMPlexGetNumLabels(dm, &numLabels);CHKERRQ(ierr);
+  ierr = MPI_Bcast(&numLabels, 1, MPIU_INT, 0, comm);CHKERRQ(ierr);
+  for (l = numLabels-1; l >= 0; --l) {
+    DMLabel     label = NULL, labelNew = NULL;
+    PetscBool   isdepth;
+
+    if (!rank) {
+      ierr = DMPlexGetLabelByNum(dm, l, &label);CHKERRQ(ierr);
+      /* Skip "depth" because it is recreated */
+      ierr = PetscStrcmp(label->name, "depth", &isdepth);CHKERRQ(ierr);
+    }
+    ierr = MPI_Bcast(&isdepth, 1, MPIU_BOOL, 0, comm);CHKERRQ(ierr);
+    if (isdepth) continue;
+    ierr = DMLabelDistribute(label, migrationSF, &labelNew);CHKERRQ(ierr);
+    ierr = DMPlexAddLabel(dmParallel, labelNew);CHKERRQ(ierr);
+  }
+  ierr = PetscLogEventEnd(DMPLEX_DistributeLabels,dm,0,0,0);CHKERRQ(ierr);
+  PetscFunctionReturn(0);
+}
+
+#undef __FUNCT__
+#define __FUNCT__ "DMPlexDistributeSetupHybrid"
+PetscErrorCode DMPlexDistributeSetupHybrid(DM dm, PetscSF migrationSF, ISLocalToGlobalMapping renumbering, DM dmParallel)
+{
+  DM_Plex        *mesh  = (DM_Plex*) dm->data;
+  DM_Plex        *pmesh = (DM_Plex*) (dmParallel)->data;
+  MPI_Comm        comm;
+  const PetscInt *gpoints;
+  PetscInt        dim, depth, n, d;
+  PetscErrorCode  ierr;
+
+  PetscFunctionBegin;
+  PetscValidHeaderSpecific(dm, DM_CLASSID, 1);
+  PetscValidPointer(dmParallel, 4);
+
+  ierr = PetscObjectGetComm((PetscObject)dm, &comm);CHKERRQ(ierr);
+  ierr = DMGetDimension(dm, &dim);CHKERRQ(ierr);
+
+  /* Setup hybrid structure */
+  for (d = 0; d <= dim; ++d) {pmesh->hybridPointMax[d] = mesh->hybridPointMax[d];}
+  ierr = MPI_Bcast(pmesh->hybridPointMax, dim+1, MPIU_INT, 0, comm);CHKERRQ(ierr);
+  ierr = ISLocalToGlobalMappingGetSize(renumbering, &n);CHKERRQ(ierr);
+  ierr = ISLocalToGlobalMappingGetIndices(renumbering, &gpoints);CHKERRQ(ierr);
+  ierr = DMPlexGetDepth(dm, &depth);CHKERRQ(ierr);
+  for (d = 0; d <= dim; ++d) {
+    PetscInt pmax = pmesh->hybridPointMax[d], newmax = 0, pEnd, stratum[2], p;
+
+    if (pmax < 0) continue;
+    ierr = DMPlexGetDepthStratum(dm, d > depth ? depth : d, &stratum[0], &stratum[1]);CHKERRQ(ierr);
+    ierr = DMPlexGetDepthStratum(dmParallel, d, NULL, &pEnd);CHKERRQ(ierr);
+    ierr = MPI_Bcast(stratum, 2, MPIU_INT, 0, comm);CHKERRQ(ierr);
+    for (p = 0; p < n; ++p) {
+      const PetscInt point = gpoints[p];
+
+      if ((point >= stratum[0]) && (point < stratum[1]) && (point >= pmax)) ++newmax;
+    }
+    if (newmax > 0) pmesh->hybridPointMax[d] = pEnd - newmax;
+    else            pmesh->hybridPointMax[d] = -1;
+  }
+  ierr = ISLocalToGlobalMappingRestoreIndices(renumbering, &gpoints);CHKERRQ(ierr);
+  PetscFunctionReturn(0);
+}
+
+#undef __FUNCT__
+#define __FUNCT__ "DMPlexDistributeSetupTree"
+PetscErrorCode DMPlexDistributeSetupTree(DM dm, PetscSF migrationSF, ISLocalToGlobalMapping renumbering, DM dmParallel)
+{
+  MPI_Comm        comm;
+  DM              refTree;
+  PetscSection    origParentSection, newParentSection;
+  PetscInt        *origParents, *origChildIDs;
+  PetscBool       flg;
+  PetscErrorCode  ierr;
+
+  PetscFunctionBegin;
+  PetscValidHeaderSpecific(dm, DM_CLASSID, 1);
+  PetscValidHeaderSpecific(dm, DM_CLASSID, 4);
+  ierr = PetscObjectGetComm((PetscObject)dm, &comm);CHKERRQ(ierr);
+
+  /* Set up tree */
+  ierr = DMPlexGetReferenceTree(dm,&refTree);CHKERRQ(ierr);
+  ierr = DMPlexSetReferenceTree(dmParallel,refTree);CHKERRQ(ierr);
+  ierr = DMPlexGetTree(dm,&origParentSection,&origParents,&origChildIDs,NULL,NULL);CHKERRQ(ierr);
+  if (origParentSection) {
+    PetscInt        pStart, pEnd;
+    PetscInt        *newParents, *newChildIDs;
+    PetscInt        *remoteOffsetsParents, newParentSize;
+    PetscSF         parentSF;
+
+    ierr = DMPlexGetChart(dmParallel, &pStart, &pEnd);CHKERRQ(ierr);
+    ierr = PetscSectionCreate(PetscObjectComm((PetscObject)dmParallel),&newParentSection);CHKERRQ(ierr);
+    ierr = PetscSectionSetChart(newParentSection,pStart,pEnd);CHKERRQ(ierr);
+    ierr = PetscSFDistributeSection(migrationSF, origParentSection, &remoteOffsetsParents, newParentSection);CHKERRQ(ierr);
+    ierr = PetscSFCreateSectionSF(migrationSF, origParentSection, remoteOffsetsParents, newParentSection, &parentSF);CHKERRQ(ierr);
+    ierr = PetscSectionGetStorageSize(newParentSection,&newParentSize);CHKERRQ(ierr);
+    ierr = PetscMalloc2(newParentSize,&newParents,newParentSize,&newChildIDs);CHKERRQ(ierr);
+    ierr = PetscSFBcastBegin(parentSF, MPIU_INT, origParents, newParents);CHKERRQ(ierr);
+    ierr = PetscSFBcastEnd(parentSF, MPIU_INT, origParents, newParents);CHKERRQ(ierr);
+    ierr = PetscSFBcastBegin(parentSF, MPIU_INT, origChildIDs, newChildIDs);CHKERRQ(ierr);
+    ierr = PetscSFBcastEnd(parentSF, MPIU_INT, origChildIDs, newChildIDs);CHKERRQ(ierr);
+    ierr = ISGlobalToLocalMappingApplyBlock(renumbering,IS_GTOLM_MASK, newParentSize, newParents, NULL, newParents);CHKERRQ(ierr);
+    ierr = PetscOptionsHasName(((PetscObject) dm)->prefix, "-parents_view", &flg);CHKERRQ(ierr);
+    if (flg) {
+      ierr = PetscPrintf(comm, "Serial Parent Section: \n");CHKERRQ(ierr);
+      ierr = PetscSectionView(origParentSection, PETSC_VIEWER_STDOUT_WORLD);CHKERRQ(ierr);
+      ierr = PetscPrintf(comm, "Parallel Parent Section: \n");CHKERRQ(ierr);
+      ierr = PetscSectionView(newParentSection, PETSC_VIEWER_STDOUT_WORLD);CHKERRQ(ierr);
+      ierr = PetscSFView(parentSF, NULL);CHKERRQ(ierr);
+    }
+    ierr = DMPlexSetTree(dmParallel,newParentSection,newParents,newChildIDs);CHKERRQ(ierr);
+    ierr = PetscSectionDestroy(&newParentSection);CHKERRQ(ierr);
+    ierr = PetscFree2(newParents,newChildIDs);CHKERRQ(ierr);
+    ierr = PetscSFDestroy(&parentSF);CHKERRQ(ierr);
+  }
+  PetscFunctionReturn(0);
+}
+
+#undef __FUNCT__
+#define __FUNCT__ "DMPlexDistributeSF"
+PetscErrorCode DMPlexDistributeSF(DM dm, PetscSF migrationSF, PetscSection partSection, IS part, PetscSection origPartSection, IS origPart, DM dmParallel)
+{
+  DM_Plex               *mesh  = (DM_Plex*) dm->data;
+  DM_Plex               *pmesh = (DM_Plex*) (dmParallel)->data;
+  PetscMPIInt            rank, numProcs;
+  MPI_Comm               comm;
+  PetscErrorCode         ierr;
+
+  PetscFunctionBegin;
+  PetscValidHeaderSpecific(dm, DM_CLASSID, 1);
+  PetscValidPointer(dmParallel,7);
+
+  /* Create point SF for parallel mesh */
+  ierr = PetscLogEventBegin(DMPLEX_DistributeSF,dm,0,0,0);CHKERRQ(ierr);
+  ierr = PetscObjectGetComm((PetscObject)dm, &comm);CHKERRQ(ierr);
+  ierr = MPI_Comm_rank(comm, &rank);CHKERRQ(ierr);
+  ierr = MPI_Comm_size(comm, &numProcs);CHKERRQ(ierr);
+  {
+    const PetscInt *leaves;
+    PetscSFNode    *remotePoints, *rowners, *lowners;
+    PetscInt        numRoots, numLeaves, numGhostPoints = 0, p, gp, *ghostPoints;
+    PetscInt        pStart, pEnd;
+
+    ierr = DMPlexGetChart(dmParallel, &pStart, &pEnd);CHKERRQ(ierr);
+    ierr = PetscSFGetGraph(migrationSF, &numRoots, &numLeaves, &leaves, NULL);CHKERRQ(ierr);
+    ierr = PetscMalloc2(numRoots,&rowners,numLeaves,&lowners);CHKERRQ(ierr);
+    for (p=0; p<numRoots; p++) {
+      rowners[p].rank  = -1;
+      rowners[p].index = -1;
+    }
+    if (origPart) {
+      /* Make sure points in the original partition are not assigned to other procs */
+      const PetscInt *origPoints;
+
+      ierr = ISGetIndices(origPart, &origPoints);CHKERRQ(ierr);
+      for (p = 0; p < numProcs; ++p) {
+        PetscInt dof, off, d;
+
+        ierr = PetscSectionGetDof(origPartSection, p, &dof);CHKERRQ(ierr);
+        ierr = PetscSectionGetOffset(origPartSection, p, &off);CHKERRQ(ierr);
+        for (d = off; d < off+dof; ++d) {
+          rowners[origPoints[d]].rank = p;
+        }
+      }
+      ierr = ISRestoreIndices(origPart, &origPoints);CHKERRQ(ierr);
+    }
+    ierr = PetscSFBcastBegin(migrationSF, MPIU_2INT, rowners, lowners);CHKERRQ(ierr);
+    ierr = PetscSFBcastEnd(migrationSF, MPIU_2INT, rowners, lowners);CHKERRQ(ierr);
+    for (p = 0; p < numLeaves; ++p) {
+      if (lowners[p].rank < 0 || lowners[p].rank == rank) { /* Either put in a bid or we know we own it */
+        lowners[p].rank  = rank;
+        lowners[p].index = leaves ? leaves[p] : p;
+      } else if (lowners[p].rank >= 0) { /* Point already claimed so flag so that MAXLOC does not listen to us */
+        lowners[p].rank  = -2;
+        lowners[p].index = -2;
+      }
+    }
+    for (p=0; p<numRoots; p++) { /* Root must not participate in the rediction, flag so that MAXLOC does not use */
+      rowners[p].rank  = -3;
+      rowners[p].index = -3;
+    }
+    ierr = PetscSFReduceBegin(migrationSF, MPIU_2INT, lowners, rowners, MPI_MAXLOC);CHKERRQ(ierr);
+    ierr = PetscSFReduceEnd(migrationSF, MPIU_2INT, lowners, rowners, MPI_MAXLOC);CHKERRQ(ierr);
+    ierr = PetscSFBcastBegin(migrationSF, MPIU_2INT, rowners, lowners);CHKERRQ(ierr);
+    ierr = PetscSFBcastEnd(migrationSF, MPIU_2INT, rowners, lowners);CHKERRQ(ierr);
+    for (p = 0; p < numLeaves; ++p) {
+      if (lowners[p].rank < 0 || lowners[p].index < 0) SETERRQ(PETSC_COMM_SELF,PETSC_ERR_PLIB,"Cell partition corrupt: point not claimed");
+      if (lowners[p].rank != rank) ++numGhostPoints;
+    }
+    ierr = PetscMalloc1(numGhostPoints,    &ghostPoints);CHKERRQ(ierr);
+    ierr = PetscMalloc1(numGhostPoints, &remotePoints);CHKERRQ(ierr);
+    for (p = 0, gp = 0; p < numLeaves; ++p) {
+      if (lowners[p].rank != rank) {
+        ghostPoints[gp]        = leaves ? leaves[p] : p;
+        remotePoints[gp].rank  = lowners[p].rank;
+        remotePoints[gp].index = lowners[p].index;
+        ++gp;
+      }
+    }
+    ierr = PetscFree2(rowners,lowners);CHKERRQ(ierr);
+    ierr = PetscSFSetGraph((dmParallel)->sf, pEnd - pStart, numGhostPoints, ghostPoints, PETSC_OWN_POINTER, remotePoints, PETSC_OWN_POINTER);CHKERRQ(ierr);
+    ierr = PetscSFSetFromOptions((dmParallel)->sf);CHKERRQ(ierr);
+  }
+  pmesh->useCone    = mesh->useCone;
+  pmesh->useClosure = mesh->useClosure;
+  ierr = PetscLogEventEnd(DMPLEX_DistributeSF,dm,0,0,0);CHKERRQ(ierr);
+  PetscFunctionReturn(0);
+}
+
+#undef __FUNCT__
 #define __FUNCT__ "DMPlexDistribute"
 /*@C
   DMPlexDistribute - Distributes the mesh and any associated sections.
@@ -826,15 +1307,14 @@ PetscErrorCode DMPlexDistribute(DM dm, const char partitioner[], PetscInt overla
 {
   DM_Plex               *mesh   = (DM_Plex*) dm->data, *pmesh;
   MPI_Comm               comm;
-  PetscInt               dim, numRemoteRanks;
-  IS                     origCellPart,        origPart,        cellPart,        part;
-  PetscSection           origCellPartSection, origPartSection, cellPartSection, partSection;
-  PetscSFNode           *remoteRanks;
-  PetscSF                partSF, pointSF, coneSF;
+  PetscInt               dim, numRemoteRanks, nroots, nleaves;
+  DM                     dmOverlap;
+  IS                     cellPart,        part;
+  PetscSection           cellPartSection, partSection;
+  PetscSFNode           *remoteRanks, *newRemote;
+  const PetscSFNode     *oldRemote;
+  PetscSF                partSF, pointSF, overlapPointSF, overlapSF;
   ISLocalToGlobalMapping renumbering;
-  PetscSection           originalConeSection, newConeSection;
-  PetscInt              *remoteOffsets;
-  PetscInt              *cones, *newCones, newConesSize;
   PetscBool              flg;
   PetscMPIInt            rank, numProcs, p;
   PetscErrorCode         ierr;
@@ -857,8 +1337,7 @@ PetscErrorCode DMPlexDistribute(DM dm, const char partitioner[], PetscInt overla
   ierr = PetscLogEventBegin(PETSCPARTITIONER_Partition,dm,0,0,0);CHKERRQ(ierr);
   if (overlap > 1) SETERRQ(comm, PETSC_ERR_SUP, "Overlap > 1 not yet implemented");
   ierr = PetscSectionCreate(comm, &cellPartSection);CHKERRQ(ierr);
-  ierr = PetscSectionCreate(comm, &origCellPartSection);CHKERRQ(ierr);
-  ierr = PetscPartitionerPartition(mesh->partitioner, dm, overlap > 0 ? PETSC_TRUE : PETSC_FALSE, cellPartSection, &cellPart, origCellPartSection, &origCellPart);CHKERRQ(ierr);
+  ierr = PetscPartitionerPartition(mesh->partitioner, dm, PETSC_FALSE, cellPartSection, &cellPart, NULL, NULL);CHKERRQ(ierr);
   /* Create SF assuming a serial partition for all processes: Could check for IS length here */
   if (!rank) numRemoteRanks = numProcs;
   else       numRemoteRanks = 0;
@@ -871,25 +1350,20 @@ PetscErrorCode DMPlexDistribute(DM dm, const char partitioner[], PetscInt overla
   ierr = PetscSFSetGraph(partSF, 1, numRemoteRanks, NULL, PETSC_OWN_POINTER, remoteRanks, PETSC_OWN_POINTER);CHKERRQ(ierr);
   ierr = PetscOptionsHasName(((PetscObject) dm)->prefix, "-partition_view", &flg);CHKERRQ(ierr);
   if (flg) {
-    ierr = PetscPrintf(comm, "Cell Partition:\n");CHKERRQ(ierr);
+    ierr = PetscPrintf(comm, "Original Cell Partition:\n");CHKERRQ(ierr);
     ierr = PetscSectionView(cellPartSection, PETSC_VIEWER_STDOUT_WORLD);CHKERRQ(ierr);
     ierr = ISView(cellPart, NULL);CHKERRQ(ierr);
-    if (origCellPart) {
-      ierr = PetscPrintf(comm, "Original Cell Partition:\n");CHKERRQ(ierr);
-      ierr = PetscSectionView(origCellPartSection, PETSC_VIEWER_STDOUT_WORLD);CHKERRQ(ierr);
-      ierr = ISView(origCellPart, NULL);CHKERRQ(ierr);
-    }
     ierr = PetscSFView(partSF, NULL);CHKERRQ(ierr);
   }
   /* Close the partition over the mesh */
   ierr = DMPlexCreatePartitionClosure(dm, cellPartSection, cellPart, &partSection, &part);CHKERRQ(ierr);
-  ierr = ISDestroy(&cellPart);CHKERRQ(ierr);
-  ierr = PetscSectionDestroy(&cellPartSection);CHKERRQ(ierr);
   /* Create new mesh */
   ierr  = DMPlexCreate(comm, dmParallel);CHKERRQ(ierr);
   ierr  = DMSetDimension(*dmParallel, dim);CHKERRQ(ierr);
   ierr  = PetscObjectSetName((PetscObject) *dmParallel, "Parallel Mesh");CHKERRQ(ierr);
   pmesh = (DM_Plex*) (*dmParallel)->data;
+  pmesh->useAnchors = mesh->useAnchors;
+
   /* Distribute sieve points and the global point numbering (replaces creating remote bases) */
   ierr = PetscSFConvertPartition(partSF, partSection, part, &renumbering, &pointSF);CHKERRQ(ierr);
   if (flg) {
@@ -901,253 +1375,47 @@ PetscErrorCode DMPlexDistribute(DM dm, const char partitioner[], PetscInt overla
     ierr = ISLocalToGlobalMappingView(renumbering, NULL);CHKERRQ(ierr);
   }
   ierr = PetscLogEventEnd(PETSCPARTITIONER_Partition,dm,0,0,0);CHKERRQ(ierr);
-  ierr = PetscLogEventBegin(DMPLEX_DistributeCones,dm,0,0,0);CHKERRQ(ierr);
-  /* Distribute cone section */
-  ierr = DMPlexGetConeSection(dm, &originalConeSection);CHKERRQ(ierr);
-  ierr = DMPlexGetConeSection(*dmParallel, &newConeSection);CHKERRQ(ierr);
-  ierr = PetscSFDistributeSection(pointSF, originalConeSection, &remoteOffsets, newConeSection);CHKERRQ(ierr);
-  ierr = DMSetUp(*dmParallel);CHKERRQ(ierr);
-  {
-    PetscInt pStart, pEnd, p;
 
-    ierr = PetscSectionGetChart(newConeSection, &pStart, &pEnd);CHKERRQ(ierr);
-    for (p = pStart; p < pEnd; ++p) {
-      PetscInt coneSize;
-      ierr               = PetscSectionGetDof(newConeSection, p, &coneSize);CHKERRQ(ierr);
-      pmesh->maxConeSize = PetscMax(pmesh->maxConeSize, coneSize);
+  /* Migrate data to a non-overlapping parallel DM */
+  ierr = DMPlexDistributeCones(dm, pointSF, renumbering, *dmParallel);CHKERRQ(ierr);
+  ierr = DMPlexDistributeCoordinates(dm, pointSF, *dmParallel);CHKERRQ(ierr);
+  ierr = DMPlexDistributeLabels(dm, pointSF, *dmParallel);CHKERRQ(ierr);
+  ierr = DMPlexDistributeSetupHybrid(dm, pointSF, renumbering, *dmParallel);CHKERRQ(ierr);
+  ierr = DMPlexDistributeSetupTree(dm, pointSF, renumbering, *dmParallel);CHKERRQ(ierr);
+
+  /* Build the point SF without overlap */
+  ierr = DMPlexDistributeSF(dm, pointSF, partSection, part, NULL, NULL, *dmParallel);CHKERRQ(ierr);
+
+  if (overlap > 0) {
+    ierr = PetscLogEventBegin(DMPLEX_DistributeOverlap,dm,0,0,0);CHKERRQ(ierr);
+    /* Add the partition overlap to the distributed DM */
+    ierr = DMPlexDistributeOverlap(*dmParallel, overlap, renumbering, &overlapSF, &dmOverlap);CHKERRQ(ierr);
+    ierr = DMDestroy(dmParallel);CHKERRQ(ierr);
+    *dmParallel = dmOverlap;
+    if (flg) {
+      ierr = PetscPrintf(comm, "Overlap Migration SF:\n");CHKERRQ(ierr);
+      ierr = PetscSFView(overlapSF, NULL);CHKERRQ(ierr);
     }
-  }
-  /* Communicate and renumber cones */
-  ierr = PetscSFCreateSectionSF(pointSF, originalConeSection, remoteOffsets, newConeSection, &coneSF);CHKERRQ(ierr);
-  ierr = DMPlexGetCones(dm, &cones);CHKERRQ(ierr);
-  ierr = DMPlexGetCones(*dmParallel, &newCones);CHKERRQ(ierr);
-  ierr = PetscSFBcastBegin(coneSF, MPIU_INT, cones, newCones);CHKERRQ(ierr);
-  ierr = PetscSFBcastEnd(coneSF, MPIU_INT, cones, newCones);CHKERRQ(ierr);
-  ierr = PetscSectionGetStorageSize(newConeSection, &newConesSize);CHKERRQ(ierr);
-  ierr = ISGlobalToLocalMappingApplyBlock(renumbering, IS_GTOLM_MASK, newConesSize, newCones, NULL, newCones);CHKERRQ(ierr);
-  ierr = PetscOptionsHasName(((PetscObject) dm)->prefix, "-cones_view", &flg);CHKERRQ(ierr);
-  if (flg) {
-    ierr = PetscPrintf(comm, "Serial Cone Section:\n");CHKERRQ(ierr);
-    ierr = PetscSectionView(originalConeSection, PETSC_VIEWER_STDOUT_WORLD);CHKERRQ(ierr);
-    ierr = PetscPrintf(comm, "Parallel Cone Section:\n");CHKERRQ(ierr);
-    ierr = PetscSectionView(newConeSection, PETSC_VIEWER_STDOUT_WORLD);CHKERRQ(ierr);
-    ierr = PetscSFView(coneSF, NULL);CHKERRQ(ierr);
-  }
-  ierr = DMPlexGetConeOrientations(dm, &cones);CHKERRQ(ierr);
-  ierr = DMPlexGetConeOrientations(*dmParallel, &newCones);CHKERRQ(ierr);
-  ierr = PetscSFBcastBegin(coneSF, MPIU_INT, cones, newCones);CHKERRQ(ierr);
-  ierr = PetscSFBcastEnd(coneSF, MPIU_INT, cones, newCones);CHKERRQ(ierr);
-  ierr = PetscSFDestroy(&coneSF);CHKERRQ(ierr);
-  ierr = PetscLogEventEnd(DMPLEX_DistributeCones,dm,0,0,0);CHKERRQ(ierr);
-  /* Create supports and stratify sieve */
-  {
-    PetscInt pStart, pEnd;
 
-    ierr = PetscSectionGetChart(pmesh->coneSection, &pStart, &pEnd);CHKERRQ(ierr);
-    ierr = PetscSectionSetChart(pmesh->supportSection, pStart, pEnd);CHKERRQ(ierr);
-  }
-  ierr = DMPlexSymmetrize(*dmParallel);CHKERRQ(ierr);
-  ierr = DMPlexStratify(*dmParallel);CHKERRQ(ierr);
-  /* Create point SF for parallel mesh */
-  ierr = PetscLogEventBegin(DMPLEX_DistributeSF,dm,0,0,0);CHKERRQ(ierr);
-  {
-    const PetscInt *leaves;
-    PetscSFNode    *remotePoints, *rowners, *lowners;
-    PetscInt        numRoots, numLeaves, numGhostPoints = 0, p, gp, *ghostPoints;
-    PetscInt        pStart, pEnd;
-
-    ierr = DMPlexGetChart(*dmParallel, &pStart, &pEnd);CHKERRQ(ierr);
-    ierr = PetscSFGetGraph(pointSF, &numRoots, &numLeaves, &leaves, NULL);CHKERRQ(ierr);
-    ierr = PetscMalloc2(numRoots,&rowners,numLeaves,&lowners);CHKERRQ(ierr);
-    for (p=0; p<numRoots; p++) {
-      rowners[p].rank  = -1;
-      rowners[p].index = -1;
-    }
-    if (origCellPart) {
-      /* Make sure points in the original partition are not assigned to other procs */
-      const PetscInt *origPoints;
-
-      ierr = DMPlexCreatePartitionClosure(dm, origCellPartSection, origCellPart, &origPartSection, &origPart);CHKERRQ(ierr);
-      ierr = ISGetIndices(origPart, &origPoints);CHKERRQ(ierr);
-      for (p = 0; p < numProcs; ++p) {
-        PetscInt dof, off, d;
-
-        ierr = PetscSectionGetDof(origPartSection, p, &dof);CHKERRQ(ierr);
-        ierr = PetscSectionGetOffset(origPartSection, p, &off);CHKERRQ(ierr);
-        for (d = off; d < off+dof; ++d) {
-          rowners[origPoints[d]].rank = p;
-        }
-      }
-      ierr = ISRestoreIndices(origPart, &origPoints);CHKERRQ(ierr);
-      ierr = ISDestroy(&origPart);CHKERRQ(ierr);
-      ierr = PetscSectionDestroy(&origPartSection);CHKERRQ(ierr);
-    }
-    ierr = ISDestroy(&origCellPart);CHKERRQ(ierr);
-    ierr = PetscSectionDestroy(&origCellPartSection);CHKERRQ(ierr);
-
-    ierr = PetscSFBcastBegin(pointSF, MPIU_2INT, rowners, lowners);CHKERRQ(ierr);
-    ierr = PetscSFBcastEnd(pointSF, MPIU_2INT, rowners, lowners);CHKERRQ(ierr);
-    for (p = 0; p < numLeaves; ++p) {
-      if (lowners[p].rank < 0 || lowners[p].rank == rank) { /* Either put in a bid or we know we own it */
-        lowners[p].rank  = rank;
-        lowners[p].index = leaves ? leaves[p] : p;
-      } else if (lowners[p].rank >= 0) { /* Point already claimed so flag so that MAXLOC does not listen to us */
-        lowners[p].rank  = -2;
-        lowners[p].index = -2;
-      }
-    }
-    for (p=0; p<numRoots; p++) { /* Root must not participate in the rediction, flag so that MAXLOC does not use */
-      rowners[p].rank  = -3;
-      rowners[p].index = -3;
-    }
-    ierr = PetscSFReduceBegin(pointSF, MPIU_2INT, lowners, rowners, MPI_MAXLOC);CHKERRQ(ierr);
-    ierr = PetscSFReduceEnd(pointSF, MPIU_2INT, lowners, rowners, MPI_MAXLOC);CHKERRQ(ierr);
-    ierr = PetscSFBcastBegin(pointSF, MPIU_2INT, rowners, lowners);CHKERRQ(ierr);
-    ierr = PetscSFBcastEnd(pointSF, MPIU_2INT, rowners, lowners);CHKERRQ(ierr);
-    for (p = 0; p < numLeaves; ++p) {
-      if (lowners[p].rank < 0 || lowners[p].index < 0) SETERRQ(PETSC_COMM_SELF,PETSC_ERR_PLIB,"Cell partition corrupt: point not claimed");
-      if (lowners[p].rank != rank) ++numGhostPoints;
-    }
-    ierr = PetscMalloc1(numGhostPoints,    &ghostPoints);CHKERRQ(ierr);
-    ierr = PetscMalloc1(numGhostPoints, &remotePoints);CHKERRQ(ierr);
-    for (p = 0, gp = 0; p < numLeaves; ++p) {
-      if (lowners[p].rank != rank) {
-        ghostPoints[gp]        = leaves ? leaves[p] : p;
-        remotePoints[gp].rank  = lowners[p].rank;
-        remotePoints[gp].index = lowners[p].index;
-        ++gp;
-      }
-    }
-    ierr = PetscFree2(rowners,lowners);CHKERRQ(ierr);
-    ierr = PetscSFSetGraph((*dmParallel)->sf, pEnd - pStart, numGhostPoints, ghostPoints, PETSC_OWN_POINTER, remotePoints, PETSC_OWN_POINTER);CHKERRQ(ierr);
-    ierr = PetscSFSetFromOptions((*dmParallel)->sf);CHKERRQ(ierr);
-  }
-  pmesh->useCone    = mesh->useCone;
-  pmesh->useClosure = mesh->useClosure;
-  pmesh->useAnchors = mesh->useAnchors;
-  ierr = PetscLogEventEnd(DMPLEX_DistributeSF,dm,0,0,0);CHKERRQ(ierr);
-  /* Distribute Coordinates */
-  {
-    PetscSection     originalCoordSection, newCoordSection;
-    Vec              originalCoordinates, newCoordinates;
-    PetscInt         bs;
-    const char      *name;
-    const PetscReal *maxCell, *L;
-
-    ierr = DMGetCoordinateSection(dm, &originalCoordSection);CHKERRQ(ierr);
-    ierr = DMGetCoordinateSection(*dmParallel, &newCoordSection);CHKERRQ(ierr);
-    ierr = DMGetCoordinatesLocal(dm, &originalCoordinates);CHKERRQ(ierr);
-    if (originalCoordinates) {
-      ierr = VecCreate(comm, &newCoordinates);CHKERRQ(ierr);
-      ierr = PetscObjectGetName((PetscObject) originalCoordinates, &name);CHKERRQ(ierr);
-      ierr = PetscObjectSetName((PetscObject) newCoordinates, name);CHKERRQ(ierr);
-
-      ierr = DMPlexDistributeField(dm, pointSF, originalCoordSection, originalCoordinates, newCoordSection, newCoordinates);CHKERRQ(ierr);
-      ierr = DMSetCoordinatesLocal(*dmParallel, newCoordinates);CHKERRQ(ierr);
-      ierr = VecGetBlockSize(originalCoordinates, &bs);CHKERRQ(ierr);
-      ierr = VecSetBlockSize(newCoordinates, bs);CHKERRQ(ierr);
-      ierr = VecDestroy(&newCoordinates);CHKERRQ(ierr);
-    }
-    ierr = DMGetPeriodicity(dm, &maxCell, &L);CHKERRQ(ierr);
-    if (L) {ierr = DMSetPeriodicity(*dmParallel, maxCell, L);CHKERRQ(ierr);}
-  }
-  /* Distribute labels */
-  ierr = PetscLogEventBegin(DMPLEX_DistributeLabels,dm,0,0,0);CHKERRQ(ierr);
-  {
-    PetscInt numLabels, l;
-
-    /* Bcast number of labels */
-    ierr = DMPlexGetNumLabels(dm, &numLabels);CHKERRQ(ierr);
-    ierr = MPI_Bcast(&numLabels, 1, MPIU_INT, 0, comm);CHKERRQ(ierr);
-    for (l = numLabels-1; l >= 0; --l) {
-      DMLabel     label = NULL, labelNew = NULL;
-      PetscBool   isdepth;
-
-      if (!rank) {
-        ierr = DMPlexGetLabelByNum(dm, l, &label);CHKERRQ(ierr);
-        /* Skip "depth" because it is recreated */
-        ierr = PetscStrcmp(label->name, "depth", &isdepth);CHKERRQ(ierr);
-      }
-      ierr = MPI_Bcast(&isdepth, 1, MPIU_BOOL, 0, comm);CHKERRQ(ierr);
-      if (isdepth) continue;
-      ierr = DMLabelDistribute(label, partSection, part, renumbering, &labelNew);CHKERRQ(ierr);
-      ierr = DMPlexAddLabel(*dmParallel, labelNew);CHKERRQ(ierr);
-    }
-  }
-  ierr = PetscLogEventEnd(DMPLEX_DistributeLabels,dm,0,0,0);CHKERRQ(ierr);
-  /* Setup hybrid structure */
-  {
-    const PetscInt *gpoints;
-    PetscInt        depth, n, d;
-
-    for (d = 0; d <= dim; ++d) {pmesh->hybridPointMax[d] = mesh->hybridPointMax[d];}
-    ierr = MPI_Bcast(pmesh->hybridPointMax, dim+1, MPIU_INT, 0, comm);CHKERRQ(ierr);
-    ierr = ISLocalToGlobalMappingGetSize(renumbering, &n);CHKERRQ(ierr);
-    ierr = ISLocalToGlobalMappingGetIndices(renumbering, &gpoints);CHKERRQ(ierr);
-    ierr = DMPlexGetDepth(dm, &depth);CHKERRQ(ierr);
-    for (d = 0; d <= dim; ++d) {
-      PetscInt pmax = pmesh->hybridPointMax[d], newmax = 0, pEnd, stratum[2], p;
-
-      if (pmax < 0) continue;
-      ierr = DMPlexGetDepthStratum(dm, d > depth ? depth : d, &stratum[0], &stratum[1]);CHKERRQ(ierr);
-      ierr = DMPlexGetDepthStratum(*dmParallel, d, NULL, &pEnd);CHKERRQ(ierr);
-      ierr = MPI_Bcast(stratum, 2, MPIU_INT, 0, comm);CHKERRQ(ierr);
-      for (p = 0; p < n; ++p) {
-        const PetscInt point = gpoints[p];
-
-        if ((point >= stratum[0]) && (point < stratum[1]) && (point >= pmax)) ++newmax;
-      }
-      if (newmax > 0) pmesh->hybridPointMax[d] = pEnd - newmax;
-      else            pmesh->hybridPointMax[d] = -1;
-    }
-    ierr = ISLocalToGlobalMappingRestoreIndices(renumbering, &gpoints);CHKERRQ(ierr);
-  }
-  /* Set up tree */
-  {
-    DM              refTree;
-    PetscSection    origParentSection, newParentSection;
-    PetscInt        *origParents, *origChildIDs;
-
-    ierr = DMPlexGetReferenceTree(dm,&refTree);CHKERRQ(ierr);
-    ierr = DMPlexSetReferenceTree(*dmParallel,refTree);CHKERRQ(ierr);
-    ierr = DMPlexGetTree(dm,&origParentSection,&origParents,&origChildIDs,NULL,NULL);CHKERRQ(ierr);
-    if (origParentSection) {
-      PetscInt        pStart, pEnd;
-      PetscInt        *newParents, *newChildIDs;
-      PetscInt        *remoteOffsetsParents, newParentSize;
-      PetscSF         parentSF;
-
-      ierr = DMPlexGetChart(*dmParallel, &pStart, &pEnd);CHKERRQ(ierr);
-      ierr = PetscSectionCreate(PetscObjectComm((PetscObject)*dmParallel),&newParentSection);CHKERRQ(ierr);
-      ierr = PetscSectionSetChart(newParentSection,pStart,pEnd);CHKERRQ(ierr);
-      ierr = PetscSFDistributeSection(pointSF, origParentSection, &remoteOffsetsParents, newParentSection);CHKERRQ(ierr);
-      ierr = PetscSFCreateSectionSF(pointSF, origParentSection, remoteOffsetsParents, newParentSection, &parentSF);CHKERRQ(ierr);
-      ierr = PetscSectionGetStorageSize(newParentSection,&newParentSize);CHKERRQ(ierr);
-      ierr = PetscMalloc2(newParentSize,&newParents,newParentSize,&newChildIDs);CHKERRQ(ierr);
-      ierr = PetscSFBcastBegin(parentSF, MPIU_INT, origParents, newParents);CHKERRQ(ierr);
-      ierr = PetscSFBcastEnd(parentSF, MPIU_INT, origParents, newParents);CHKERRQ(ierr);
-      ierr = PetscSFBcastBegin(parentSF, MPIU_INT, origChildIDs, newChildIDs);CHKERRQ(ierr);
-      ierr = PetscSFBcastEnd(parentSF, MPIU_INT, origChildIDs, newChildIDs);CHKERRQ(ierr);
-      ierr = ISGlobalToLocalMappingApplyBlock(renumbering,IS_GTOLM_MASK, newParentSize, newParents, NULL, newParents);CHKERRQ(ierr);
-      ierr = PetscOptionsHasName(((PetscObject) dm)->prefix, "-parents_view", &flg);CHKERRQ(ierr);
-      if (flg) {
-        ierr = PetscPrintf(comm, "Serial Parent Section: \n");CHKERRQ(ierr);
-        ierr = PetscSectionView(origParentSection, PETSC_VIEWER_STDOUT_WORLD);CHKERRQ(ierr);
-        ierr = PetscPrintf(comm, "Parallel Parent Section: \n");CHKERRQ(ierr);
-        ierr = PetscSectionView(newParentSection, PETSC_VIEWER_STDOUT_WORLD);CHKERRQ(ierr);
-        ierr = PetscSFView(parentSF, NULL);CHKERRQ(ierr);
-      }
-      ierr = DMPlexSetTree(*dmParallel,newParentSection,newParents,newChildIDs);CHKERRQ(ierr);
-      ierr = PetscSectionDestroy(&newParentSection);CHKERRQ(ierr);
-      ierr = PetscFree2(newParents,newChildIDs);CHKERRQ(ierr);
-      ierr = PetscSFDestroy(&parentSF);CHKERRQ(ierr);
-    }
+    /* Re-map the pointSF to establish the full migration pattern */
+    ierr = PetscSFGetGraph(pointSF, &nroots, NULL, NULL, &oldRemote);CHKERRQ(ierr);
+    ierr = PetscSFGetGraph(overlapSF, NULL, &nleaves, NULL, NULL);CHKERRQ(ierr);
+    ierr = PetscMalloc1(nleaves, &newRemote);CHKERRQ(ierr);
+    ierr = PetscSFBcastBegin(overlapSF, MPIU_2INT, oldRemote, newRemote);CHKERRQ(ierr);
+    ierr = PetscSFBcastEnd(overlapSF, MPIU_2INT, oldRemote, newRemote);CHKERRQ(ierr);
+    ierr = PetscSFCreate(comm, &overlapPointSF);CHKERRQ(ierr);
+    ierr = PetscSFSetGraph(overlapPointSF, nroots, nleaves, NULL, PETSC_OWN_POINTER, newRemote, PETSC_OWN_POINTER);CHKERRQ(ierr);
+    ierr = PetscSFDestroy(&pointSF);CHKERRQ(ierr);
+    pointSF = overlapPointSF;
+    ierr = PetscLogEventEnd(DMPLEX_DistributeOverlap,dm,0,0,0);CHKERRQ(ierr);
   }
   /* Cleanup Partition */
   ierr = ISLocalToGlobalMappingDestroy(&renumbering);CHKERRQ(ierr);
   ierr = PetscSFDestroy(&partSF);CHKERRQ(ierr);
   ierr = PetscSectionDestroy(&partSection);CHKERRQ(ierr);
   ierr = ISDestroy(&part);CHKERRQ(ierr);
+  ierr = PetscSectionDestroy(&cellPartSection);CHKERRQ(ierr);
+  ierr = ISDestroy(&cellPart);CHKERRQ(ierr);
   /* Copy BC */
   ierr = DMPlexCopyBoundary(dm, *dmParallel);CHKERRQ(ierr);
   /* Cleanup */
@@ -1155,5 +1423,126 @@ PetscErrorCode DMPlexDistribute(DM dm, const char partitioner[], PetscInt overla
   else    {ierr = PetscSFDestroy(&pointSF);CHKERRQ(ierr);}
   ierr = DMSetFromOptions(*dmParallel);CHKERRQ(ierr);
   ierr = PetscLogEventEnd(DMPLEX_Distribute,dm,0,0,0);CHKERRQ(ierr);
+  PetscFunctionReturn(0);
+}
+
+#undef __FUNCT__
+#define __FUNCT__ "DMPlexDistributeOverlap"
+/*@C
+  DMPlexDistribute - Add partition overlap to a distributed non-overlapping DM.
+
+  Not Collective
+
+  Input Parameter:
++ dm  - The non-overlapping distrbuted DMPlex object
+- overlap - The overlap of partitions, 0 is the default
+
+  Output Parameter:
++ sf - The PetscSF used for point distribution
+- dmOverlap - The overlapping distributed DMPlex object, or NULL
+
+  Note: If the mesh was not distributed, the return value is NULL.
+
+  The user can control the definition of adjacency for the mesh using DMPlexGetAdjacencyUseCone() and
+  DMPlexSetAdjacencyUseClosure(). They should choose the combination appropriate for the function
+  representation on the mesh.
+
+  Level: intermediate
+
+.keywords: mesh, elements
+.seealso: DMPlexCreate(), DMPlexDistributeByFace(), DMPlexSetAdjacencyUseCone(), DMPlexSetAdjacencyUseClosure()
+@*/
+PetscErrorCode DMPlexDistributeOverlap(DM dm, PetscInt overlap, ISLocalToGlobalMapping renumbering, PetscSF *sf, DM *dmOverlap)
+{
+  MPI_Comm               comm;
+  PetscMPIInt            rank;
+  PetscSection           rootSection, leafSection;
+  IS                     rootrank, leafrank;
+  PetscSection           coneSection;
+  PetscSF                overlapSF, migrationSF, pointSF, newPointSF;
+  PetscSFNode           *ghostRemote;
+  const PetscSFNode     *overlapRemote;
+  ISLocalToGlobalMapping overlapRenumbering;
+  const PetscInt        *renumberingArray, *overlapLocal;
+  PetscInt               dim, p, pStart, pEnd, conesSize, idx;
+  PetscInt               numGhostPoints, numOverlapPoints, numSharedPoints, overlapLeaves;
+  PetscInt              *cones, *ghostLocal, *overlapRenumberingArray, *pointIDs, *recvPointIDs;
+  PetscErrorCode         ierr;
+
+  PetscFunctionBegin;
+  PetscValidHeaderSpecific(dm, DM_CLASSID, 1);
+  if (sf) PetscValidPointer(sf, 3);
+  PetscValidPointer(dmOverlap, 4);
+
+  ierr = PetscObjectGetComm((PetscObject)dm,&comm);CHKERRQ(ierr);
+  ierr = MPI_Comm_rank(comm, &rank);CHKERRQ(ierr);
+  ierr = DMGetDimension(dm, &dim);CHKERRQ(ierr);
+
+  /* Compute point overlap with neighbouring processes on the distributed DM */
+  ierr = PetscLogEventBegin(PETSCPARTITIONER_Partition,dm,0,0,0);CHKERRQ(ierr);
+  ierr = PetscSectionCreate(comm, &rootSection);CHKERRQ(ierr);
+  ierr = PetscSectionCreate(comm, &leafSection);CHKERRQ(ierr);
+  ierr = DMPlexDistributeOwnership(dm, rootSection, &rootrank, leafSection, &leafrank);CHKERRQ(ierr);
+  ierr = DMPlexCreateOverlap(dm, rootSection, rootrank, leafSection, leafrank, &overlapSF);CHKERRQ(ierr);
+  ierr = PetscLogEventEnd(PETSCPARTITIONER_Partition,dm,0,0,0);CHKERRQ(ierr);
+
+  /* Build dense migration SF that maps the non-overlapping partition to the overlapping one */
+  ierr = DMPlexCreateOverlapMigrationSF(dm, overlapSF, &migrationSF);CHKERRQ(ierr);
+
+  /* Convert cones to global numbering before migrating them */
+  ierr = DMPlexGetConeSection(dm, &coneSection);CHKERRQ(ierr);
+  ierr = PetscSectionGetStorageSize(coneSection, &conesSize);CHKERRQ(ierr);
+  ierr = DMPlexGetCones(dm, &cones);CHKERRQ(ierr);
+  ierr = ISLocalToGlobalMappingApplyBlock(renumbering, conesSize, cones, cones);CHKERRQ(ierr);
+
+  /* Derive the new local-to-global mapping from the old one */
+  ierr = PetscSFGetGraph(migrationSF, NULL, &overlapLeaves, &overlapLocal, &overlapRemote);CHKERRQ(ierr);
+  ierr = PetscMalloc1(overlapLeaves, &overlapRenumberingArray);CHKERRQ(ierr);
+  ierr = ISLocalToGlobalMappingGetBlockIndices(renumbering, &renumberingArray);CHKERRQ(ierr);
+  ierr = PetscSFBcastBegin(migrationSF, MPIU_INT, renumberingArray, overlapRenumberingArray);CHKERRQ(ierr);
+  ierr = PetscSFBcastEnd(migrationSF, MPIU_INT, renumberingArray, overlapRenumberingArray);CHKERRQ(ierr);
+  ierr = ISLocalToGlobalMappingCreate(comm, 1, overlapLeaves, (const PetscInt*) overlapRenumberingArray, PETSC_OWN_POINTER, &overlapRenumbering);CHKERRQ(ierr);
+
+  /* Build the overlapping DM */
+  ierr = DMPlexCreate(comm, dmOverlap);CHKERRQ(ierr);
+  ierr = DMSetDimension(*dmOverlap, dim);CHKERRQ(ierr);
+  ierr = PetscObjectSetName((PetscObject) *dmOverlap, "Parallel Mesh");CHKERRQ(ierr);
+  ierr = DMPlexDistributeCones(dm, migrationSF, overlapRenumbering, *dmOverlap);CHKERRQ(ierr);
+  ierr = DMPlexDistributeCoordinates(dm, migrationSF, *dmOverlap);CHKERRQ(ierr);
+  ierr = DMPlexDistributeLabels(dm, migrationSF, *dmOverlap);CHKERRQ(ierr);
+  ierr = DMPlexDistributeSetupHybrid(dm, migrationSF, overlapRenumbering, *dmOverlap);CHKERRQ(ierr);
+
+  /* Build the new point SF by propagating the depthShift generate remote root indices */
+  ierr = DMGetPointSF(dm, &pointSF);CHKERRQ(ierr);
+  ierr = PetscSFGetGraph(pointSF, NULL, &numSharedPoints, NULL, NULL);CHKERRQ(ierr);
+  ierr = PetscSFGetGraph(overlapSF, NULL, &numOverlapPoints, NULL, NULL);CHKERRQ(ierr);
+  numGhostPoints = numSharedPoints + numOverlapPoints;
+  ierr = PetscMalloc2(numGhostPoints, &ghostLocal, numGhostPoints, &ghostRemote);CHKERRQ(ierr);
+  ierr = DMPlexGetChart(dm, &pStart, &pEnd);CHKERRQ(ierr);
+  ierr = PetscMalloc2(pEnd-pStart, &pointIDs, overlapLeaves, &recvPointIDs);CHKERRQ(ierr);
+  for (p=0; p<overlapLeaves; p++) {
+    if (overlapRemote[p].rank == rank) pointIDs[overlapRemote[p].index] = overlapLocal[p];
+  }
+  ierr = PetscSFBcastBegin(migrationSF, MPIU_INT, pointIDs, recvPointIDs);CHKERRQ(ierr);
+  ierr = PetscSFBcastEnd(migrationSF, MPIU_INT, pointIDs, recvPointIDs);CHKERRQ(ierr);
+  for (idx=0, p=0; p<overlapLeaves; p++) {
+    if (overlapRemote[p].rank != rank) {
+      ghostLocal[idx] = overlapLocal[p];
+      ghostRemote[idx].index = recvPointIDs[p];
+      ghostRemote[idx].rank = overlapRemote[p].rank;
+      idx++;
+    }
+  }
+  ierr = DMPlexGetChart(*dmOverlap, &pStart, &pEnd);CHKERRQ(ierr);
+  ierr = PetscSFCreate(comm, &newPointSF);;CHKERRQ(ierr);
+  ierr = PetscSFSetGraph(newPointSF, pEnd - pStart, numGhostPoints, ghostLocal, PETSC_OWN_POINTER, ghostRemote, PETSC_OWN_POINTER);CHKERRQ(ierr);
+  ierr = DMSetPointSF(*dmOverlap, newPointSF);CHKERRQ(ierr);
+  /* Cleanup overlap partition */
+  ierr = ISLocalToGlobalMappingDestroy(&overlapRenumbering);CHKERRQ(ierr);
+  ierr = PetscSFDestroy(&overlapSF);CHKERRQ(ierr);
+  ierr = PetscFree2(pointIDs, recvPointIDs);CHKERRQ(ierr);
+  if (sf) *sf = migrationSF;
+  else    {ierr = PetscSFDestroy(&migrationSF);CHKERRQ(ierr);}
+  ierr = DMSetFromOptions(*dmOverlap);CHKERRQ(ierr);
   PetscFunctionReturn(0);
 }
