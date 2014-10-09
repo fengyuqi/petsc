@@ -1303,7 +1303,6 @@ PetscErrorCode  VecGetSubVector(Vec X,IS is,Vec *Y)
 {
   PetscErrorCode   ierr;
   Vec              Z;
-  PetscObjectState state;
 
   PetscFunctionBegin;
   PetscValidHeaderSpecific(X,VEC_CLASSID,1);
@@ -1344,13 +1343,13 @@ PetscErrorCode  VecGetSubVector(Vec X,IS is,Vec *Y)
       ierr = VecScatterCreate(X,is,Z,NULL,&scatter);CHKERRQ(ierr);
       ierr = VecScatterBegin(scatter,X,Z,INSERT_VALUES,SCATTER_FORWARD);CHKERRQ(ierr);
       ierr = VecScatterEnd(scatter,X,Z,INSERT_VALUES,SCATTER_FORWARD);CHKERRQ(ierr);
+      ierr = PetscObjectCompose((PetscObject)Z,"VecGetSubVector_Scatter",(PetscObject)scatter);CHKERRQ(ierr);
       ierr = VecScatterDestroy(&scatter);CHKERRQ(ierr);
     }
   }
   /* Record the state when the subvector was gotten so we know whether its values need to be put back */
   if (VecGetSubVectorSavedStateId < 0) {ierr = PetscObjectComposedDataRegister(&VecGetSubVectorSavedStateId);CHKERRQ(ierr);}
-  ierr = PetscObjectStateGet((PetscObject)Z,&state);CHKERRQ(ierr);
-  ierr = PetscObjectComposedDataSetInt((PetscObject)Z,VecGetSubVectorSavedStateId,state);CHKERRQ(ierr);
+  ierr = PetscObjectComposedDataSetInt((PetscObject)Z,VecGetSubVectorSavedStateId,1);CHKERRQ(ierr);
   *Y   = Z;
   PetscFunctionReturn(0);
 }
@@ -1383,25 +1382,16 @@ PetscErrorCode  VecRestoreSubVector(Vec X,IS is,Vec *Y)
   if (X->ops->restoresubvector) {
     ierr = (*X->ops->restoresubvector)(X,is,Y);CHKERRQ(ierr);
   } else {
-    PetscObjectState savedstate=0,newstate;
+    PETSC_UNUSED PetscObjectState dummystate = 0;
     PetscBool valid;
-    ierr = PetscObjectComposedDataGetInt((PetscObject)*Y,VecGetSubVectorSavedStateId,savedstate,valid);CHKERRQ(ierr);
-    ierr = PetscObjectStateGet((PetscObject)*Y,&newstate);CHKERRQ(ierr);
-    /* !valid means that the state has changed, no need to compare savedstate.*/
-    /* (savedstate < newstate) is equivalent to (!valid) and is here just to avoid compilation warnings.*/
-    if (!valid || (savedstate < newstate)) {
-      /* We might need to copy entries back, first check whether we have no-copy view */
-      PetscInt  gstart,gend,start;
-      PetscBool contiguous,gcontiguous;
-      ierr = VecGetOwnershipRange(X,&gstart,&gend);CHKERRQ(ierr);
-      ierr = ISContiguousLocal(is,gstart,gend,&start,&contiguous);CHKERRQ(ierr);
-      ierr = MPI_Allreduce(&contiguous,&gcontiguous,1,MPIU_BOOL,MPI_LAND,PetscObjectComm((PetscObject)is));CHKERRQ(ierr);
-      if (!gcontiguous) {
-        VecScatter scatter;
-        ierr = VecScatterCreate(*Y,NULL,X,is,&scatter);CHKERRQ(ierr);
-        ierr = VecScatterBegin(scatter,*Y,X,INSERT_VALUES,SCATTER_FORWARD);CHKERRQ(ierr);
-        ierr = VecScatterEnd(scatter,*Y,X,INSERT_VALUES,SCATTER_FORWARD);CHKERRQ(ierr);
-        ierr = VecScatterDestroy(&scatter);CHKERRQ(ierr);
+    ierr = PetscObjectComposedDataGetInt((PetscObject)*Y,VecGetSubVectorSavedStateId,dummystate,valid);CHKERRQ(ierr);
+    if (!valid) {
+      VecScatter scatter;
+
+      ierr = PetscObjectQuery((PetscObject)*Y,"VecGetSubVector_Scatter",(PetscObject*)&scatter);CHKERRQ(ierr);
+      if (scatter) {
+        ierr = VecScatterBegin(scatter,*Y,X,INSERT_VALUES,SCATTER_REVERSE);CHKERRQ(ierr);
+        ierr = VecScatterEnd(scatter,*Y,X,INSERT_VALUES,SCATTER_REVERSE);CHKERRQ(ierr);
       }
     }
     ierr = VecDestroy(Y);CHKERRQ(ierr);
