@@ -13,9 +13,9 @@
   Level: intermediate
 
   Notes:
-$     FEM:   Two points p and q are adjacent if q \in closure(star(p)), useCone = PETSC_FALSE, useClosure = PETSC_TRUE
-$     FVM:   Two points p and q are adjacent if q \in star(cone(p)),    useCone = PETSC_TRUE,  useClosure = PETSC_FALSE
-$     FVM++: Two points p and q are adjacent if q \in star(closure(p)), useCone = PETSC_TRUE,  useClosure = PETSC_TRUE
+$     FEM:   Two points p and q are adjacent if q \in closure(star(p)),   useCone = PETSC_FALSE, useClosure = PETSC_TRUE
+$     FVM:   Two points p and q are adjacent if q \in support(p+cone(p)), useCone = PETSC_TRUE,  useClosure = PETSC_FALSE
+$     FVM++: Two points p and q are adjacent if q \in star(closure(p)),   useCone = PETSC_TRUE,  useClosure = PETSC_TRUE
 
 .seealso: DMPlexGetAdjacencyUseCone(), DMPlexSetAdjacencyUseClosure(), DMPlexGetAdjacencyUseClosure(), DMPlexDistribute(), DMPlexPreallocateOperator()
 @*/
@@ -43,9 +43,9 @@ PetscErrorCode DMPlexSetAdjacencyUseCone(DM dm, PetscBool useCone)
   Level: intermediate
 
   Notes:
-$     FEM:   Two points p and q are adjacent if q \in closure(star(p)), useCone = PETSC_FALSE, useClosure = PETSC_TRUE
-$     FVM:   Two points p and q are adjacent if q \in star(cone(p)),    useCone = PETSC_TRUE,  useClosure = PETSC_FALSE
-$     FVM++: Two points p and q are adjacent if q \in star(closure(p)), useCone = PETSC_TRUE,  useClosure = PETSC_TRUE
+$     FEM:   Two points p and q are adjacent if q \in closure(star(p)),   useCone = PETSC_FALSE, useClosure = PETSC_TRUE
+$     FVM:   Two points p and q are adjacent if q \in support(p+cone(p)), useCone = PETSC_TRUE,  useClosure = PETSC_FALSE
+$     FVM++: Two points p and q are adjacent if q \in star(closure(p)),   useCone = PETSC_TRUE,  useClosure = PETSC_TRUE
 
 .seealso: DMPlexSetAdjacencyUseCone(), DMPlexSetAdjacencyUseClosure(), DMPlexGetAdjacencyUseClosure(), DMPlexDistribute(), DMPlexPreallocateOperator()
 @*/
@@ -72,9 +72,9 @@ PetscErrorCode DMPlexGetAdjacencyUseCone(DM dm, PetscBool *useCone)
   Level: intermediate
 
   Notes:
-$     FEM:   Two points p and q are adjacent if q \in closure(star(p)), useCone = PETSC_FALSE, useClosure = PETSC_TRUE
-$     FVM:   Two points p and q are adjacent if q \in star(cone(p)),    useCone = PETSC_TRUE,  useClosure = PETSC_FALSE
-$     FVM++: Two points p and q are adjacent if q \in star(closure(p)), useCone = PETSC_TRUE,  useClosure = PETSC_TRUE
+$     FEM:   Two points p and q are adjacent if q \in closure(star(p)),   useCone = PETSC_FALSE, useClosure = PETSC_TRUE
+$     FVM:   Two points p and q are adjacent if q \in support(p+cone(p)), useCone = PETSC_TRUE,  useClosure = PETSC_FALSE
+$     FVM++: Two points p and q are adjacent if q \in star(closure(p)),   useCone = PETSC_TRUE,  useClosure = PETSC_TRUE
 
 .seealso: DMPlexGetAdjacencyUseClosure(), DMPlexSetAdjacencyUseCone(), DMPlexGetAdjacencyUseCone(), DMPlexDistribute(), DMPlexPreallocateOperator()
 @*/
@@ -102,9 +102,9 @@ PetscErrorCode DMPlexSetAdjacencyUseClosure(DM dm, PetscBool useClosure)
   Level: intermediate
 
   Notes:
-$     FEM:   Two points p and q are adjacent if q \in closure(star(p)), useCone = PETSC_FALSE, useClosure = PETSC_TRUE
-$     FVM:   Two points p and q are adjacent if q \in star(cone(p)),    useCone = PETSC_TRUE,  useClosure = PETSC_FALSE
-$     FVM++: Two points p and q are adjacent if q \in star(closure(p)), useCone = PETSC_TRUE,  useClosure = PETSC_TRUE
+$     FEM:   Two points p and q are adjacent if q \in closure(star(p)),   useCone = PETSC_FALSE, useClosure = PETSC_TRUE
+$     FVM:   Two points p and q are adjacent if q \in support(p+cone(p)), useCone = PETSC_TRUE,  useClosure = PETSC_FALSE
+$     FVM++: Two points p and q are adjacent if q \in star(closure(p)),   useCone = PETSC_TRUE,  useClosure = PETSC_TRUE
 
 .seealso: DMPlexSetAdjacencyUseClosure(), DMPlexSetAdjacencyUseCone(), DMPlexGetAdjacencyUseCone(), DMPlexDistribute(), DMPlexPreallocateOperator()
 @*/
@@ -179,12 +179,13 @@ static PetscErrorCode DMPlexGetAdjacency_Cone_Internal(DM dm, PetscInt p, PetscI
   PetscFunctionBeginHot;
   ierr = DMPlexGetConeSize(dm, p, &coneSize);CHKERRQ(ierr);
   ierr = DMPlexGetCone(dm, p, &cone);CHKERRQ(ierr);
-  for (c = 0; c < coneSize; ++c) {
+  for (c = 0; c <= coneSize; ++c) {
+    const PetscInt  point   = !c ? p : cone[c-1];
     const PetscInt *support = NULL;
     PetscInt        supportSize, s, q;
 
-    ierr = DMPlexGetSupportSize(dm, cone[c], &supportSize);CHKERRQ(ierr);
-    ierr = DMPlexGetSupport(dm, cone[c], &support);CHKERRQ(ierr);
+    ierr = DMPlexGetSupportSize(dm, point, &supportSize);CHKERRQ(ierr);
+    ierr = DMPlexGetSupport(dm, point, &support);CHKERRQ(ierr);
     for (s = 0; s < supportSize; ++s) {
       for (q = 0; q < numAdj || (adj[numAdj++] = support[s],0); ++q) {
         if (support[s] == adj[q]) break;
@@ -207,12 +208,13 @@ static PetscErrorCode DMPlexGetAdjacency_Support_Internal(DM dm, PetscInt p, Pet
   PetscFunctionBeginHot;
   ierr = DMPlexGetSupportSize(dm, p, &supportSize);CHKERRQ(ierr);
   ierr = DMPlexGetSupport(dm, p, &support);CHKERRQ(ierr);
-  for (s = 0; s < supportSize; ++s) {
-    const PetscInt *cone = NULL;
+  for (s = 0; s <= supportSize; ++s) {
+    const PetscInt  point = !s ? p : support[s-1];
+    const PetscInt *cone  = NULL;
     PetscInt        coneSize, c, q;
 
-    ierr = DMPlexGetConeSize(dm, support[s], &coneSize);CHKERRQ(ierr);
-    ierr = DMPlexGetCone(dm, support[s], &cone);CHKERRQ(ierr);
+    ierr = DMPlexGetConeSize(dm, point, &coneSize);CHKERRQ(ierr);
+    ierr = DMPlexGetCone(dm, point, &cone);CHKERRQ(ierr);
     for (c = 0; c < coneSize; ++c) {
       for (q = 0; q < numAdj || (adj[numAdj++] = cone[c],0); ++q) {
         if (cone[c] == adj[q]) break;
@@ -559,7 +561,7 @@ PetscErrorCode DMPlexCreateOverlap(DM dm, PetscSection rootSection, IS rootrank,
   PetscInt           pStart, pEnd, p, sStart, sEnd, nleaves, l, numNeighbors, n, ovSize;
   PetscInt           idx, numRemote;
   PetscMPIInt        rank, numProcs;
-  PetscBool          flg;
+  PetscBool          useCone, useClosure, flg;
   PetscErrorCode     ierr;
 
   PetscFunctionBegin;
@@ -613,6 +615,36 @@ PetscErrorCode DMPlexCreateOverlap(DM dm, PetscSection rootSection, IS rootrank,
   ierr = PetscFree(adj);CHKERRQ(ierr);
   ierr = ISRestoreIndices(rootrank, &rrank);CHKERRQ(ierr);
   ierr = ISRestoreIndices(leafrank, &nrank);CHKERRQ(ierr);
+  /* We require the closure in the overlap */
+  ierr = DMPlexGetAdjacencyUseCone(dm, &useCone);CHKERRQ(ierr);
+  ierr = DMPlexGetAdjacencyUseClosure(dm, &useClosure);CHKERRQ(ierr);
+  if (useCone || !useClosure) {
+    IS              rankIS,   pointIS;
+    const PetscInt *ranks,   *points;
+    PetscInt        numRanks, numPoints, r, p;
+
+    ierr = DMLabelGetValueIS(ovAdjByRank, &rankIS);CHKERRQ(ierr);
+    ierr = ISGetLocalSize(rankIS, &numRanks);CHKERRQ(ierr);
+    ierr = ISGetIndices(rankIS, &ranks);CHKERRQ(ierr);
+    for (r = 0; r < numRanks; ++r) {
+      const PetscInt rank = ranks[r];
+
+      ierr = DMLabelGetStratumIS(ovAdjByRank, rank, &pointIS);CHKERRQ(ierr);
+      ierr = ISGetLocalSize(pointIS, &numPoints);CHKERRQ(ierr);
+      ierr = ISGetIndices(pointIS, &points);CHKERRQ(ierr);
+      for (p = 0; p < numPoints; ++p) {
+        PetscInt *closure = NULL, closureSize, c;
+
+        ierr = DMPlexGetTransitiveClosure(dm, points[p], PETSC_TRUE, &closureSize, &closure);CHKERRQ(ierr);
+        for (c = 0; c < closureSize*2; c += 2) {ierr = DMLabelSetValue(ovAdjByRank, closure[c], rank);CHKERRQ(ierr);}
+        ierr = DMPlexRestoreTransitiveClosure(dm, points[p], PETSC_TRUE, &closureSize, &closure);CHKERRQ(ierr);
+      }
+      ierr = ISRestoreIndices(pointIS, &points);CHKERRQ(ierr);
+      ierr = ISDestroy(&pointIS);CHKERRQ(ierr);
+    }
+    ierr = ISRestoreIndices(rankIS, &ranks);CHKERRQ(ierr);
+    ierr = ISDestroy(&rankIS);CHKERRQ(ierr);
+  }
   ierr = PetscOptionsHasName(((PetscObject) dm)->prefix, "-overlap_view", &flg);CHKERRQ(ierr);
   if (flg) {
     ierr = PetscViewerASCIISynchronizedAllow(PETSC_VIEWER_STDOUT_WORLD, PETSC_TRUE);CHKERRQ(ierr);
@@ -765,7 +797,8 @@ PetscErrorCode DMPlexCreateOverlapMigrationSF(DM dm, PetscSF overlapSF, PetscSF 
   /* Form the overlap SF build an SF that describes the full overlap migration SF */
   ierr = DMPlexGetChart(dm, &pStart, &pEnd);CHKERRQ(ierr);
   newLeaves = pEnd - pStart + nleaves;
-  ierr = PetscMalloc2(newLeaves, &ilocal, newLeaves, &iremote);CHKERRQ(ierr);
+  ierr = PetscMalloc1(newLeaves, &ilocal);CHKERRQ(ierr);
+  ierr = PetscMalloc1(newLeaves, &iremote);CHKERRQ(ierr);
   /* First map local points to themselves */
   for (d=0; d<dim+1; d++) {
     ierr = DMPlexGetDepthStratum(dm, d, &pStart, &pEnd);CHKERRQ(ierr);
@@ -992,6 +1025,16 @@ PetscErrorCode DMPlexDistributeCones(DM dm, PetscSF migrationSF, ISLocalToGlobal
   ierr = PetscSFBcastEnd(coneSF, MPIU_INT, cones, newCones);CHKERRQ(ierr);
   ierr = PetscSectionGetStorageSize(newConeSection, &newConesSize);CHKERRQ(ierr);
   ierr = ISGlobalToLocalMappingApplyBlock(renumbering, IS_GTOLM_MASK, newConesSize, newCones, NULL, newCones);CHKERRQ(ierr);
+#if PETSC_USE_DEBUG
+  {
+    PetscInt  p;
+    PetscBool valid = PETSC_TRUE;
+    for (p = 0; p < newConesSize; ++p) {
+      if (newCones[p] < 0) {valid = PETSC_FALSE; ierr = PetscPrintf(PETSC_COMM_SELF, "Point %d not in overlap SF\n", p);CHKERRQ(ierr);}
+    }
+    if (!valid) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_OUTOFRANGE, "Invalid global to local map");
+  }
+#endif
   ierr = PetscOptionsHasName(((PetscObject) dm)->prefix, "-cones_view", &flg);CHKERRQ(ierr);
   if (flg) {
     ierr = PetscPrintf(comm, "Serial Cone Section:\n");CHKERRQ(ierr);
@@ -1056,11 +1099,13 @@ PetscErrorCode DMPlexDistributeCoordinates(DM dm, PetscSF migrationSF, DM dmPara
 
 #undef __FUNCT__
 #define __FUNCT__ "DMPlexDistributeLabels"
+/* Here we are assuming that process 0 always has everything */
 PetscErrorCode DMPlexDistributeLabels(DM dm, PetscSF migrationSF, DM dmParallel)
 {
   MPI_Comm       comm;
   PetscMPIInt    rank;
-  PetscInt       numLabels, l;
+  PetscInt       numLabels, numLocalLabels, l;
+  PetscBool      hasLabels = PETSC_FALSE;
   PetscErrorCode ierr;
 
   PetscFunctionBegin;
@@ -1070,14 +1115,16 @@ PetscErrorCode DMPlexDistributeLabels(DM dm, PetscSF migrationSF, DM dmParallel)
   ierr = PetscObjectGetComm((PetscObject)dm, &comm);CHKERRQ(ierr);
   ierr = MPI_Comm_rank(comm, &rank);CHKERRQ(ierr);
 
-  /* Bcast number of labels */
-  ierr = DMPlexGetNumLabels(dm, &numLabels);CHKERRQ(ierr);
+  /* Everyone must have either the same number of labels, or none */
+  ierr = DMPlexGetNumLabels(dm, &numLocalLabels);CHKERRQ(ierr);
+  numLabels = numLocalLabels;
   ierr = MPI_Bcast(&numLabels, 1, MPIU_INT, 0, comm);CHKERRQ(ierr);
+  if (numLabels == numLocalLabels) hasLabels = PETSC_TRUE;
   for (l = numLabels-1; l >= 0; --l) {
     DMLabel     label = NULL, labelNew = NULL;
     PetscBool   isdepth;
 
-    if (!rank) {
+    if (hasLabels) {
       ierr = DMPlexGetLabelByNum(dm, l, &label);CHKERRQ(ierr);
       /* Skip "depth" because it is recreated */
       ierr = PetscStrcmp(label->name, "depth", &isdepth);CHKERRQ(ierr);
@@ -1259,7 +1306,7 @@ PetscErrorCode DMPlexDistributeSF(DM dm, PetscSF migrationSF, PetscSection partS
       if (lowners[p].rank < 0 || lowners[p].index < 0) SETERRQ(PETSC_COMM_SELF,PETSC_ERR_PLIB,"Cell partition corrupt: point not claimed");
       if (lowners[p].rank != rank) ++numGhostPoints;
     }
-    ierr = PetscMalloc1(numGhostPoints,    &ghostPoints);CHKERRQ(ierr);
+    ierr = PetscMalloc1(numGhostPoints, &ghostPoints);CHKERRQ(ierr);
     ierr = PetscMalloc1(numGhostPoints, &remotePoints);CHKERRQ(ierr);
     for (p = 0, gp = 0; p < numLeaves; ++p) {
       if (lowners[p].rank != rank) {
@@ -1528,7 +1575,8 @@ PetscErrorCode DMPlexDistributeOverlap(DM dm, PetscInt overlap, ISLocalToGlobalM
   ierr = PetscSFGetGraph(pointSF, NULL, &numSharedPoints, NULL, NULL);CHKERRQ(ierr);
   ierr = PetscSFGetGraph(overlapSF, NULL, &numOverlapPoints, NULL, NULL);CHKERRQ(ierr);
   numGhostPoints = numSharedPoints + numOverlapPoints;
-  ierr = PetscMalloc2(numGhostPoints, &ghostLocal, numGhostPoints, &ghostRemote);CHKERRQ(ierr);
+  ierr = PetscMalloc1(numGhostPoints, &ghostLocal);CHKERRQ(ierr);
+  ierr = PetscMalloc1(numGhostPoints, &ghostRemote);CHKERRQ(ierr);
   ierr = DMPlexGetChart(dm, &pStart, &pEnd);CHKERRQ(ierr);
   ierr = PetscMalloc2(pEnd-pStart, &pointIDs, overlapLeaves, &recvPointIDs);CHKERRQ(ierr);
   for (p=0; p<overlapLeaves; p++) {
@@ -1555,6 +1603,5 @@ PetscErrorCode DMPlexDistributeOverlap(DM dm, PetscInt overlap, ISLocalToGlobalM
   ierr = PetscFree2(pointIDs, recvPointIDs);CHKERRQ(ierr);
   if (sf) *sf = migrationSF;
   else    {ierr = PetscSFDestroy(&migrationSF);CHKERRQ(ierr);}
-  ierr = DMSetFromOptions(*dmOverlap);CHKERRQ(ierr);
   PetscFunctionReturn(0);
 }
