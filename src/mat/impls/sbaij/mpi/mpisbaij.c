@@ -1583,9 +1583,11 @@ static struct _MatOps MatOps_Values = {MatSetValues_MPISBAIJ,
                                        0,
                                /*139*/ 0,
                                        0,
-                                       0
+                                       0,
+                                       0,
+                                       0,
+                                /*144*/MatCreateMPIMatConcatenateSeqMat_MPISBAIJ
 };
-
 
 #undef __FUNCT__
 #define __FUNCT__ "MatGetDiagonalBlock_MPISBAIJ"
@@ -2890,28 +2892,8 @@ PetscErrorCode MatCreateMPISBAIJConcatenateSeqSBAIJNumeric(MPI_Comm comm,Mat inm
 }
 
 #undef __FUNCT__
-#define __FUNCT__ "MatCreateMPISBAIJConcatenateSeqSBAIJ"
-/*@
-      MatCreateMPISBAIJConcatenateSeqSBAIJ - Creates a single large PETSc matrix by concatenating sequential
-                 matrices from each processor
-
-    Collective on MPI_Comm
-
-   Input Parameters:
-+    comm - the communicators the parallel matrix will live on
-.    inmat - the input sequential matrices
-.    n - number of local columns (or PETSC_DECIDE)
--    scall - either MAT_INITIAL_MATRIX or MAT_REUSE_MATRIX
-
-   Output Parameter:
-.    outmat - the parallel matrix generated
-
-    Level: advanced
-
-   Notes: The number of columns of the matrix in EACH processor MUST be the same.
-
-@*/
-PetscErrorCode MatCreateMPISBAIJConcatenateSeqSBAIJ(MPI_Comm comm,Mat inmat,PetscInt n,MatReuse scall,Mat *outmat)
+#define __FUNCT__ "MatCreateMPIMatConcatenateSeqMat_MPISBAIJ"
+PetscErrorCode MatCreateMPIMatConcatenateSeqMat_MPISBAIJ(MPI_Comm comm,Mat inmat,PetscInt n,MatReuse scall,Mat *outmat)
 {
   PetscErrorCode ierr;
   PetscMPIInt    size;
@@ -2942,13 +2924,14 @@ PetscErrorCode MatGetRedundantMatrix_MPISBAIJ(Mat mat,PetscInt nsubcomm,MPI_Comm
 {
   PetscErrorCode ierr;
   MPI_Comm       comm;
-  PetscMPIInt    size,subsize;
-  PetscInt       mloc_sub,rstart,rend,M=mat->rmap->N,N=mat->cmap->N;
+  PetscMPIInt    size;
+  PetscInt       mloc_sub,rstart,rend,M=mat->rmap->N,N=mat->cmap->N,bs=mat->rmap->bs;
   Mat_Redundant  *redund=NULL;
   PetscSubcomm   psubcomm=NULL;
   MPI_Comm       subcomm_in=subcomm;
   Mat            *matseq;
   IS             isrow,iscol;
+  PetscBool      newsubcomm=PETSC_FALSE;
 
   PetscFunctionBegin;
   if (subcomm_in == MPI_COMM_NULL) { /* user does not provide subcomm */
@@ -2962,24 +2945,20 @@ PetscErrorCode MatGetRedundantMatrix_MPISBAIJ(Mat mat,PetscInt nsubcomm,MPI_Comm
       ierr = PetscSubcommSetNumber(psubcomm,nsubcomm);CHKERRQ(ierr);
       ierr = PetscSubcommSetType(psubcomm,PETSC_SUBCOMM_CONTIGUOUS);CHKERRQ(ierr);
       ierr = PetscSubcommSetFromOptions(psubcomm);CHKERRQ(ierr);
-      subcomm = psubcomm->comm;
+      ierr = PetscCommDuplicate(psubcomm->comm,&subcomm,NULL);CHKERRQ(ierr);
+      newsubcomm = PETSC_TRUE;
+      ierr = PetscSubcommDestroy(&psubcomm);CHKERRQ(ierr);
     } else { /* retrieve psubcomm and subcomm */
       ierr = PetscObjectGetComm((PetscObject)(*matredundant),&subcomm);CHKERRQ(ierr);
-      ierr = MPI_Comm_size(subcomm,&subsize);CHKERRQ(ierr);
       redund   = (*matredundant)->redundant;
-      psubcomm = redund->psubcomm;
-    }
-    if (psubcomm->type == PETSC_SUBCOMM_INTERLACED) {
-      SETERRQ(PETSC_COMM_SELF,PETSC_ERR_SUP,"not supported");
     }
   }
 
   /* use MPI subcomm via MatGetSubMatrices(); use subcomm_in or psubcomm->comm (psubcomm->type != INTERLACED) */
-  ierr = MPI_Comm_size(subcomm,&subsize);CHKERRQ(ierr);
   if (reuse == MAT_INITIAL_MATRIX) {
     /* create a local sequential matrix matseq[0] */
     mloc_sub = PETSC_DECIDE;
-    ierr = PetscSplitOwnership(subcomm,&mloc_sub,&M);CHKERRQ(ierr);
+    ierr = PetscSplitOwnershipBlock(subcomm,bs,&mloc_sub,&M);CHKERRQ(ierr);
     ierr = MPI_Scan(&mloc_sub,&rend,1,MPIU_INT,MPI_SUM,subcomm);CHKERRQ(ierr);
     rstart = rend - mloc_sub;
     ierr = ISCreateStride(PETSC_COMM_SELF,mloc_sub,rstart,1,&isrow);CHKERRQ(ierr);
@@ -2990,8 +2969,8 @@ PetscErrorCode MatGetRedundantMatrix_MPISBAIJ(Mat mat,PetscInt nsubcomm,MPI_Comm
     iscol  = redund->iscol;
     matseq = redund->matseq;
   }
-  ierr = MatGetSubMatrices_MPISBAIJ(mat,1,&isrow,&iscol,reuse,&matseq);CHKERRQ(ierr);
-  ierr = MatCreateMPISBAIJConcatenateSeqSBAIJ(subcomm,matseq[0],PETSC_DECIDE,reuse,matredundant);CHKERRQ(ierr);
+  ierr = MatGetSubMatrices(mat,1,&isrow,&iscol,reuse,&matseq);CHKERRQ(ierr);
+  ierr = MatCreateMPIMatConcatenateSeqMat(subcomm,matseq[0],PETSC_DECIDE,reuse,matredundant);CHKERRQ(ierr);
 
   if (reuse == MAT_INITIAL_MATRIX) {
     /* create a supporting struct and attach it to C for reuse */
@@ -3000,7 +2979,11 @@ PetscErrorCode MatGetRedundantMatrix_MPISBAIJ(Mat mat,PetscInt nsubcomm,MPI_Comm
     redund->isrow              = isrow;
     redund->iscol              = iscol;
     redund->matseq             = matseq;
-    redund->psubcomm           = psubcomm;
+    if (newsubcomm) {
+      redund->subcomm          = subcomm;
+    } else {
+      redund->subcomm          = MPI_COMM_NULL;
+    }
   }
   PetscFunctionReturn(0);
 }
