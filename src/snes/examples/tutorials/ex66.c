@@ -7,7 +7,13 @@ domain, using a parallel block-structured mesh (DMFOREST) to discretize it.\n\n\
 #include <petscsnes.h>
 #include <petscds.h>
 
-#include <p4est_bits.h>
+#ifdef PETSC_HAVE_P4EST
+  #include <p4est_bits.h>
+  #include <p4est_ghost.h>
+  #include <p4est_lnodes.h>
+#else
+  #error Please install p4est using --download-p4est
+#endif
 
 PetscInt spatialDim = 0;
 
@@ -207,6 +213,8 @@ int main(int argc, char **argv)
   DM             dm;   /* problem definition */
   Vec            u;    /* solution, residual vectors */
   AppCtx         user; /* user-defined work context */
+  PetscSection   section;
+  PetscInt       v, lsize;
   PetscReal      ferrors[1];
   void         (*initialGuess[2])(const PetscReal x[], PetscScalar *u, void* ctx) = {zero_vector, zero_scalar};
   PetscErrorCode ierr;
@@ -255,18 +263,42 @@ int main(int argc, char **argv)
     p4est_partition(p4est, 1, NULL);
   }
 
+  /* Write the forest to disk for visualization, one file per processor. */
+  p4est_vtk_write_file(p4est, NULL, "ex66");
+
   /* Create the ghost layer to learn about parallel neighbors. */
   ghost = p4est_ghost_new(p4est, P4EST_CONNECT_FULL);
 
   /* Create a node numbering for continuous linear finite elements. */
   lnodes = p4est_lnodes_new(p4est, ghost, 1);
 
+  /* Create a section from the lnodes */
+  ierr = PetscSectionCreate(PETSC_COMM_WORLD, &section);CHKERRQ(ierr);
+  ierr = PetscSectionSetNumFields(section, 1);CHKERRQ(ierr);
+  ierr = PetscSectionSetFieldName(section, 0, "potential");CHKERRQ(ierr);
+  /* We can count the various thing from lnodes, but it would be nice to
+     get the info directly from p4est, ask Toby.
+
+     Cells:    [0, num_local_elements)
+     Vertices: [num_local_elements, num_local_elements+num_local_nodes)
+     Faces:    [)
+   */
+  ierr = PetscSectionSetChart(section, 0, lnodes->num_local_elements + lnodes->num_local_nodes);CHKERRQ(ierr);
+  for (v = lnodes->num_local_elements; v < lnodes->num_local_elements + lnodes->num_local_nodes; ++v) {
+    ierr = PetscSectionSetDof(section, v, 1);CHKERRQ(ierr);
+  }
+  ierr = PetscSectionSetUp(section);CHKERRQ(ierr);
+  ierr = PetscSectionGetStorageSize(section, &lsize);CHKERRQ(ierr);
+  if (lsize != lnodes->num_local_nodes) SETERRQ2(PETSC_COMM_SELF, PETSC_ERR_ARG_SIZ, "Local section size %d != %d from lnodes", lsize, lnodes->num_local_nodes);
+
+  /* Create SF */
+
   /* Destroy the ghost structure -- no longer needed after node creation. */
   p4est_ghost_destroy(ghost);
   ghost = NULL;
 
-  /* Write the forest to disk for visualization, one file per processor. */
-  p4est_vtk_write_file(p4est, NULL, "ex66");
+  /* We are done with the FE node numbering. */
+  p4est_lnodes_destroy (lnodes);
 
   ierr = SNESSetDM(snes, dm);CHKERRQ(ierr);
   ierr = DMSetApplicationContext(dm, &user);CHKERRQ(ierr);
