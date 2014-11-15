@@ -132,7 +132,7 @@ PetscErrorCode DMPlexCreateGmsh(MPI_Comm comm, PetscViewer viewer, PetscBool int
     if (!match) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONG, "File is not a valid Gmsh file");
     ierr = PetscViewerRead(viewer, line, 1, PETSC_STRING);CHKERRQ(ierr);
     snum = sscanf(line, "%d", &numVertices);CHKERRQ(snum != 1);
-    ierr = PetscMalloc(numVertices*3 * sizeof(PetscScalar), &coordsIn);CHKERRQ(ierr);
+    ierr = PetscMalloc1(numVertices*3, &coordsIn);CHKERRQ(ierr);
     for (v = 0; v < numVertices; ++v) {
       int i;
       ierr = PetscViewerRead(viewer, &i, 1, PETSC_ENUM);CHKERRQ(ierr);
