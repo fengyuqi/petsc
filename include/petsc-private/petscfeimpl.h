@@ -5,6 +5,13 @@
 #include <petscds.h>
 #include <petsc-private/petscimpl.h>
 
+PETSC_EXTERN PetscBool PetscSpaceRegisterAllCalled;
+PETSC_EXTERN PetscBool PetscDualSpaceRegisterAllCalled;
+PETSC_EXTERN PetscBool PetscFERegisterAllCalled;
+PETSC_EXTERN PetscErrorCode PetscSpaceRegisterAll(void);
+PETSC_EXTERN PetscErrorCode PetscDualSpaceRegisterAll(void);
+PETSC_EXTERN PetscErrorCode PetscFERegisterAll(void);
+
 typedef struct _PetscSpaceOps *PetscSpaceOps;
 struct _PetscSpaceOps {
   PetscErrorCode (*setfromoptions)(PetscSpace);
