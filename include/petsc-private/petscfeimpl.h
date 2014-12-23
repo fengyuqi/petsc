@@ -4,6 +4,7 @@
 #include <petscfe.h>
 #include <petscds.h>
 #include <petsc-private/petscimpl.h>
+#include <petsc-private/dmpleximpl.h>
 
 PETSC_EXTERN PetscBool PetscSpaceRegisterAllCalled;
 PETSC_EXTERN PetscBool PetscDualSpaceRegisterAllCalled;
@@ -132,11 +133,11 @@ typedef struct {
 #endif
 
 typedef struct {
-  PetscInt   cellRefiner;    /* The cell refiner defining the cell division */
-  PetscInt   numSubelements; /* The number of subelements */
-  PetscReal *v0;             /* The affine transformation for each subelement */
-  PetscReal *jac, *invjac;
-  PetscInt  *embedding;      /* Map from subelements dofs to element dofs */
+  CellRefiner   cellRefiner;    /* The cell refiner defining the cell division */
+  PetscInt      numSubelements; /* The number of subelements */
+  PetscReal    *v0;             /* The affine transformation for each subelement */
+  PetscReal    *jac, *invjac;
+  PetscInt     *embedding;      /* Map from subelements dofs to element dofs */
 } PetscFE_Composite;
 
 /* Utility functions */
