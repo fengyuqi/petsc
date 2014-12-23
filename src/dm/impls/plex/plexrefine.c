@@ -147,14 +147,14 @@ PetscErrorCode CellRefinerInCellTest_Internal(CellRefiner refiner, const PetscRe
   *inside = PETSC_TRUE;
   switch (refiner) {
   case REFINER_NOOP: break;
-  case 1:
+  case REFINER_SIMPLEX_2D:
     for (d = 0; d < 2; ++d) {
       if (point[d] < -1.0) {*inside = PETSC_FALSE; break;}
       sum += point[d];
     }
     if (sum > 0.0) {*inside = PETSC_FALSE; break;}
     break;
-  case 2:
+  case REFINER_HEX_2D:
     for (d = 0; d < 2; ++d) if ((point[d] < -1.0) || (point[d] > 1.0)) {*inside = PETSC_FALSE; break;}
     break;
   default:
@@ -5553,6 +5553,7 @@ static PetscErrorCode CellRefinerSetCoordinates(CellRefiner refiner, DM dm, Pets
     }
   case REFINER_HEX_2D:
   case REFINER_HYBRID_HEX_2D:
+  case REFINER_SIMPLEX_1D:
     /* Cell vertices have the average of corner coordinates */
     for (c = cStart; c < cMax; ++c) {
       const PetscInt newv = vStartNew + (vEnd - vStart) + (eMax - eStart) + (c - cStart) + (spaceDim > 2 ? (fMax - fStart) : 0);
@@ -5573,36 +5574,6 @@ static PetscErrorCode CellRefinerSetCoordinates(CellRefiner refiner, DM dm, Pets
       for (d = 0; d < spaceDim; ++d) coordsNew[offnew+d] /= coneSize;
       ierr = DMPlexRestoreTransitiveClosure(dm, c, PETSC_TRUE, &closureSize, &cone);CHKERRQ(ierr);
     }
-  case REFINER_SIMPLEX_1D:
-    /* Cell vertices have the average of the two end coordinates */
-    for (c = cStart; c < cMax; ++c ) {
-      const PetscInt newv = vStartNew + (vEnd - vStart) + (c - cStart);
-      const PetscInt *cone;
-      PetscInt        coneSize, offA, offB, offnew, d;
-
-      ierr = DMPlexGetConeSize(dm, c, &coneSize);CHKERRQ(ierr);
-      if (coneSize != 2) SETERRQ2(PetscObjectComm((PetscObject)dm), PETSC_ERR_ARG_WRONG, "Cell %d cone should have two vertices, not %d", c, coneSize);
-      ierr = DMPlexGetCone(dm, c, &cone);CHKERRQ(ierr);
-      ierr = PetscSectionGetOffset(coordSection, cone[0], &offA);CHKERRQ(ierr);
-      ierr = PetscSectionGetOffset(coordSection, cone[1], &offB);CHKERRQ(ierr);
-      ierr = PetscSectionGetOffset(coordSectionNew, newv, &offnew);CHKERRQ(ierr);
-      ierr = DMPlexLocalizeCoordinate_Internal(dm, spaceDim, &coords[offA], &coords[offB], &coordsNew[offnew]);CHKERRQ(ierr);
-      for (d = 0; d < spaceDim; ++d) {
-        coordsNew[offnew+d] = 0.5*(coords[offA+d] + coordsNew[offnew+d]);
-      }
-    }
-    /* Old vertices have the same coordinates */
-    for (v = vStart; v < vEnd; ++v) {
-      const PetscInt newv = vStartNew + (v - vStart);
-      PetscInt       off, offnew, d;
-
-      ierr = PetscSectionGetOffset(coordSection, v, &off);CHKERRQ(ierr);
-      ierr = PetscSectionGetOffset(coordSectionNew, newv, &offnew);CHKERRQ(ierr);
-      for (d = 0; d < spaceDim; ++d) {
-        coordsNew[offnew+d] = coords[off+d];
-      }
-    }
-    break;
   case REFINER_SIMPLEX_2D:
   case REFINER_HYBRID_SIMPLEX_2D:
   case REFINER_SIMPLEX_3D:
@@ -6266,6 +6237,7 @@ static PetscErrorCode CellRefinerCreateLabels(CellRefiner refiner, DM dm, PetscI
   case REFINER_HYBRID_HEX_2D:
     if (cMax < 0) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONG, "No cell maximum specified in hybrid mesh");
     if (fMax < 0) SETERRQ(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONG, "No face maximum specified in hybrid mesh");
+    break;
   default:
     SETERRQ1(PETSC_COMM_SELF, PETSC_ERR_ARG_WRONG, "Unknown cell refiner %d", refiner);
   }
@@ -6749,14 +6721,15 @@ PetscErrorCode DMPlexCreateCoarsePointIS(DM dm, IS *fpointIS)
   ierr = PetscMalloc1(pEnd-pStart,&fpoints);CHKERRQ(ierr);
   for (p = 0; p < pEnd-pStart; ++p) fpoints[p] = -1;
   switch (cellRefiner) {
-  case 1: /* Simplicial 2D */
-  case 3: /* Hybrid simplicial 2D */
-  case 2: /* Hex 2D */
-  case 4: /* Hybrid Hex 2D */
-  case 5: /* Simplicial 3D */
-  case 7: /* Hybrid Simplicial 3D */
-  case 6: /* Hex 3D */
-  case 8: /* Hybrid Hex 3D */
+  case REFINER_SIMPLEX_1D:
+  case REFINER_SIMPLEX_2D:
+  case REFINER_HYBRID_SIMPLEX_2D:
+  case REFINER_HEX_2D:
+  case REFINER_HYBRID_HEX_2D:
+  case REFINER_SIMPLEX_3D:
+  case REFINER_HYBRID_SIMPLEX_3D:
+  case REFINER_HEX_3D:
+  case REFINER_HYBRID_HEX_3D:
     for (v = vStart; v < vEnd; ++v) fpoints[v-pStart] = vStartNew + (v - vStart);
     break;
   default:
