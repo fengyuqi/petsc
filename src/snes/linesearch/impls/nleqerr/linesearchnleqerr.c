@@ -8,8 +8,8 @@ typedef struct {
   PetscReal lambda_prev; /* previous step length: for some reason SNESLineSearchGetLambda returns 1 instead of the previous step length */
 } SNESLineSearch_NLEQERR;
 
-PetscBool NLEQERR_cited = PETSC_FALSE;
-const char NLEQERR_citation[] = "@book{deuflhard2011,\n"
+static PetscBool NLEQERR_cited = PETSC_FALSE;
+static const char NLEQERR_citation[] = "@book{deuflhard2011,\n"
                                "  title = {Newton Methods for Nonlinear Problems},\n"
                                "  author = {Peter Deuflhard},\n"
                                "  volume = 35,\n"
@@ -98,17 +98,15 @@ static PetscErrorCode  SNESLineSearchApply_NLEQERR(SNESLineSearch linesearch)
       ierr = PetscViewerASCIIPrintf(monitor,"    Line search: Lipschitz estimate: %14.12e; lambda: %14.12e\n", (double) nleqerr->mu_curr, (double) lambda);CHKERRQ(ierr);
       ierr = PetscViewerASCIISubtractTab(monitor,((PetscObject)linesearch)->tablevel);CHKERRQ(ierr);
     }
-  }
-  else {
+  } else {
     lambda = linesearch->damping;
   }
-
 
   /* The main while loop of the algorithm. 
      At the end of this while loop, G should have the accepted new X in it. */
 
   count = 0;
-  while (true) {
+  while (PETSC_TRUE) {
     if (monitor) {
       ierr = PetscViewerASCIIAddTab(monitor,((PetscObject)linesearch)->tablevel);CHKERRQ(ierr);
       ierr = PetscViewerASCIIPrintf(monitor,"    Line search: entering iteration with lambda: %14.12e\n", lambda);CHKERRQ(ierr);
@@ -117,8 +115,7 @@ static PetscErrorCode  SNESLineSearchApply_NLEQERR(SNESLineSearch linesearch)
 
     /* Check that we haven't performed too many iterations */
     count += 1;
-    if (count >= max_its)
-    {
+    if (count >= max_its) {
       if (monitor) {
         ierr = PetscViewerASCIIAddTab(monitor,((PetscObject)linesearch)->tablevel);CHKERRQ(ierr);
         ierr = PetscViewerASCIIPrintf(monitor,"    Line search: maximum iterations reached\n");CHKERRQ(ierr);
@@ -181,16 +178,14 @@ static PetscErrorCode  SNESLineSearchApply_NLEQERR(SNESLineSearch linesearch)
       lambda = PetscMin(mudash, 0.5 * lambda);
       lambda = PetscMax(lambda, minlambda);
       /* continue through the loop, i.e. go back to regularity test */
-    }
-    else {
+    } else {
       /* linesearch terminated */
       lambdadash = PetscMin(1.0, mudash);
 
       if (lambdadash == 1.0 && lambda == 1.0 && wnorm <= stol) {
         /* store the updated state, X - Y - W, in G:
            I need to keep W for the next linesearch */
-        ierr = VecZeroEntries(G);CHKERRQ(ierr);
-        ierr = VecAXPY(G, +1.0, X);CHKERRQ(ierr);
+        ierr = VecCopy(X, G);CHKERRQ(ierr);
         ierr = VecAXPY(G, -1.0, Y);CHKERRQ(ierr);
         ierr = VecAXPY(G, -1.0, W);CHKERRQ(ierr);
         break;
