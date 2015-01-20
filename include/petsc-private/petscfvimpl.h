@@ -74,6 +74,7 @@ struct _p_PetscFV {
   PetscBool       computeGradients; /* Flag for gradient computation */
   PetscScalar    *fluxWork;         /* The work array for flux calculation */
   PetscQuadrature quadrature;       /* Suitable quadrature on the volume */
+  PetscReal      *B, *D, *H;        /* Tabulation of pseudo-basis and derivatives at quadrature points */
 };
 
 typedef struct {
