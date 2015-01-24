@@ -768,7 +768,7 @@ PetscErrorCode PCSetUp_GAMG(PC pc)
 
     /* should be called in PCSetFromOptions_GAMG(), but cannot be called prior to PCMGSetLevels() */
     ierr = PetscObjectOptionsBegin((PetscObject)pc);CHKERRQ(ierr);
-    ierr = PCSetFromOptions_MG(pc);CHKERRQ(ierr);
+    ierr = PCSetFromOptions_MG(PetscOptionsObject,pc);CHKERRQ(ierr);
     ierr = PetscOptionsEnd();CHKERRQ(ierr);
     if (mg->galerkin != 2) SETERRQ(comm,PETSC_ERR_USER,"GAMG does Galerkin manually so the -pc_mg_galerkin option must not be used.");
 
@@ -1319,7 +1319,7 @@ static PetscErrorCode PCGAMGSetType_GAMG(PC pc, PCGAMGType type)
 
 #undef __FUNCT__
 #define __FUNCT__ "PCSetFromOptions_GAMG"
-PetscErrorCode PCSetFromOptions_GAMG(PC pc)
+PetscErrorCode PCSetFromOptions_GAMG(PetscOptions *PetscOptionsObject,PC pc)
 {
   PetscErrorCode ierr;
   PC_MG          *mg      = (PC_MG*)pc->data;
@@ -1330,7 +1330,7 @@ PetscErrorCode PCSetFromOptions_GAMG(PC pc)
 
   PetscFunctionBegin;
   ierr = PetscObjectGetComm((PetscObject)pc,&comm);CHKERRQ(ierr);
-  ierr = PetscOptionsHead("GAMG options");CHKERRQ(ierr);
+  ierr = PetscOptionsHead(PetscOptionsObject,"GAMG options");CHKERRQ(ierr);
   {
     /* -pc_gamg_type */
     {
@@ -1362,7 +1362,7 @@ PetscErrorCode PCSetFromOptions_GAMG(PC pc)
     ierr = PetscOptionsInt("-pc_mg_levels","Set number of MG levels","PCGAMGSetNlevels",pc_gamg->Nlevels,&pc_gamg->Nlevels,NULL);CHKERRQ(ierr);
 
     /* set options for subtype */
-    if (pc_gamg->ops->setfromoptions) {ierr = (*pc_gamg->ops->setfromoptions)(pc);CHKERRQ(ierr);}
+    if (pc_gamg->ops->setfromoptions) {ierr = (*pc_gamg->ops->setfromoptions)(PetscOptionsObject,pc);CHKERRQ(ierr);}
   }
   ierr = PetscOptionsTail();CHKERRQ(ierr);
   PetscFunctionReturn(0);

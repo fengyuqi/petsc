@@ -141,13 +141,13 @@ PetscErrorCode MatMultAdd_SchurComplement(Mat N,Vec x,Vec y,Vec z)
 
 #undef __FUNCT__
 #define __FUNCT__ "MatSetFromOptions_SchurComplement"
-PetscErrorCode MatSetFromOptions_SchurComplement(Mat N)
+PetscErrorCode MatSetFromOptions_SchurComplement(PetscOptions *PetscOptionsObject,Mat N)
 {
   Mat_SchurComplement *Na = (Mat_SchurComplement*)N->data;
   PetscErrorCode      ierr;
 
   PetscFunctionBegin;
-  ierr = PetscOptionsHead("MatSchurComplementOptions");CHKERRQ(ierr);
+  ierr = PetscOptionsHead(PetscOptionsObject,"MatSchurComplementOptions");CHKERRQ(ierr);
   Na->ainvtype = MAT_SCHUR_COMPLEMENT_AINV_DIAG;
   ierr = PetscOptionsEnum("-mat_schur_complement_ainv_type","Type of approximation for inv(A00) used when assembling Sp = A11 - A10 inv(A00) A01","MatSchurComplementSetAinvType",MatSchurComplementAinvTypes,(PetscEnum)Na->ainvtype,(PetscEnum*)&Na->ainvtype,NULL);CHKERRQ(ierr);
   ierr = PetscOptionsTail();CHKERRQ(ierr);

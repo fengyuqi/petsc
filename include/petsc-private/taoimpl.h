@@ -34,7 +34,7 @@ struct _TaoOps {
     PetscErrorCode (*setup)(Tao);
     PetscErrorCode (*solve)(Tao);
     PetscErrorCode (*view)(Tao, PetscViewer);
-    PetscErrorCode (*setfromoptions)(Tao);
+    PetscErrorCode (*setfromoptions)(PetscOptions*,Tao);
     PetscErrorCode (*destroy)(Tao);
 };
 
