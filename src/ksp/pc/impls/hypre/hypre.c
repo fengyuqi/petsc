@@ -715,7 +715,7 @@ static PetscErrorCode PCView_HYPRE_ParaSails(PC pc,PetscViewer viewer)
 /* --------------------------------------------------------------------------------------------*/
 #undef __FUNCT__
 #define __FUNCT__ "PCSetFromOptions_HYPRE_AMS"
-static PetscErrorCode PCSetFromOptions_HYPRE_AMS(PC pc)
+static PetscErrorCode PCSetFromOptions_HYPRE_AMS(PetscOptions *PetscOptionsObject,PC pc)
 {
   PC_HYPRE       *jac = (PC_HYPRE*)pc->data;
   PetscErrorCode ierr;
@@ -723,7 +723,7 @@ static PetscErrorCode PCSetFromOptions_HYPRE_AMS(PC pc)
   PetscBool      flag,flag2,flag3,flag4;
 
   PetscFunctionBegin;
-  ierr = PetscOptionsHead("HYPRE AMS Options");CHKERRQ(ierr);
+  ierr = PetscOptionsHead(PetscOptionsObject,"HYPRE AMS Options");CHKERRQ(ierr);
   ierr = PetscOptionsInt("-pc_hypre_ams_print_level","Debugging output level for AMS","None",jac->ams_print,&jac->ams_print,&flag);CHKERRQ(ierr);
   if (flag) PetscStackCallStandard(HYPRE_AMSSetPrintLevel,(jac->hsolver,jac->ams_print));
   ierr = PetscOptionsInt("-pc_hypre_ams_max_iter","Maximum number of AMS multigrid iterations within PCApply","None",jac->ams_max_iter,&jac->ams_max_iter,&flag);CHKERRQ(ierr);
@@ -1273,7 +1273,7 @@ static PetscErrorCode  PCHYPRESetType_HYPRE(PC pc,const char name[])
   ierr = PetscFree(jac->hypre_type);CHKERRQ(ierr);
 
   jac->hypre_type = NULL;
-  SETERRQ1(PetscObjectComm((PetscObject)pc),PETSC_ERR_ARG_UNKNOWN_TYPE,"Unknown HYPRE preconditioner %s; Choices are pilut, parasails, boomeramg",name);
+  SETERRQ1(PetscObjectComm((PetscObject)pc),PETSC_ERR_ARG_UNKNOWN_TYPE,"Unknown HYPRE preconditioner %s; Choices are pilut, parasails, boomeramg, ams",name);
   PetscFunctionReturn(0);
 }
 
@@ -1287,12 +1287,12 @@ static PetscErrorCode PCSetFromOptions_HYPRE(PetscOptions *PetscOptionsObject,PC
 {
   PetscErrorCode ierr;
   PetscInt       indx;
-  const char     *type[] = {"pilut","parasails","boomeramg"};
+  const char     *type[] = {"pilut","parasails","boomeramg","ams"};
   PetscBool      flg;
 
   PetscFunctionBegin;
   ierr = PetscOptionsHead(PetscOptionsObject,"HYPRE preconditioner options");CHKERRQ(ierr);
-  ierr = PetscOptionsEList("-pc_hypre_type","HYPRE preconditioner type","PCHYPRESetType",type,3,"boomeramg",&indx,&flg);CHKERRQ(ierr);
+  ierr = PetscOptionsEList("-pc_hypre_type","HYPRE preconditioner type","PCHYPRESetType",type,5,"boomeramg",&indx,&flg);CHKERRQ(ierr);
   if (flg) {
     ierr = PCHYPRESetType_HYPRE(pc,type[indx]);CHKERRQ(ierr);
   } else {
@@ -1312,10 +1312,10 @@ static PetscErrorCode PCSetFromOptions_HYPRE(PetscOptions *PetscOptionsObject,PC
 
    Input Parameters:
 +     pc - the preconditioner context
--     name - either  pilut, parasails, boomeramg
+-     name - either  pilut, parasails, boomeramg, ams
 
    Options Database Keys:
-   -pc_hypre_type - One of pilut, parasails, boomeramg
+   -pc_hypre_type - One of pilut, parasails, boomeramg, ams
 
    Level: intermediate
 
@@ -1343,7 +1343,7 @@ PetscErrorCode  PCHYPRESetType(PC pc,const char name[])
 .     pc - the preconditioner context
 
    Output Parameter:
-.     name - either  pilut, parasails, boomeramg
+.     name - either  pilut, parasails, boomeramg, ams
 
    Level: intermediate
 
@@ -1366,7 +1366,7 @@ PetscErrorCode  PCHYPREGetType(PC pc,const char *name[])
      PCHYPRE - Allows you to use the matrix element based preconditioners in the LLNL package hypre
 
    Options Database Keys:
-+   -pc_hypre_type - One of pilut, parasails, boomeramg
++   -pc_hypre_type - One of pilut, parasails, boomeramg, ams
 -   Too many others to list, run with -pc_type hypre -pc_hypre_type XXX -help to see options for the XXX
           preconditioner
 
