@@ -471,7 +471,6 @@ PETSC_EXTERN PetscErrorCode SNESShellSetSolve(SNES,PetscErrorCode (*)(SNES,Vec))
 
 /* --------- Routines specifically for line search methods --------------- */
 
-typedef struct _p_LineSearch* SNESLineSearch;
 
 /*S
      SNESLineSearch - Abstract PETSc object that manages line-search operations
@@ -482,6 +481,7 @@ typedef struct _p_LineSearch* SNESLineSearch;
 
 .seealso:  SNESLineSearchCreate(), SNESLineSearchSetType(), SNES
 S*/
+typedef struct _p_LineSearch* SNESLineSearch;
 
 /*J
     SNESLineSearchType - String with the name of a PETSc line search method
@@ -490,7 +490,6 @@ S*/
 
 .seealso: SNESLineSearchSetType(), SNES
 J*/
-
 typedef const char* SNESLineSearchType;
 #define SNESLINESEARCHBT                 "bt"
 #define SNESLINESEARCHNLEQERR            "nleqerr"

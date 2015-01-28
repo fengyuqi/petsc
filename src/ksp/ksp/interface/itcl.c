@@ -345,7 +345,7 @@ PetscErrorCode  KSPSetFromOptions(KSP ksp)
   const char     *convtests[] = {"default","skip"};
   char           type[256], monfilename[PETSC_MAX_PATH_LEN];
   PetscViewer    monviewer;
-  PetscBool      flg,flag,set,reuse;
+  PetscBool      flg,flag,reuse,set;
   PetscInt       model[2]={0,0},nmax;
   KSPNormType    normtype;
   PCSide         pcside;
