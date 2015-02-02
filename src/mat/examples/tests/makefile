@@ -685,6 +685,11 @@ ex172: ex172.o chkopts
 	-${CLINKER} -o ex172 ex172.o ${PETSC_MAT_LIB}
 	${RM} ex172.o
 
+
+ex173: ex173.o chkopts
+	-${CLINKER} -o ex173 ex173.o ${PETSC_MAT_LIB}
+	${RM} ex173.o
+
 ex174: ex174.o chkopts
 	-${CLINKER} -o ex174 ex174.o ${PETSC_MAT_LIB}
 	${RM} ex174.o
@@ -2239,7 +2244,7 @@ TESTEXAMPLES_DATAFILESPATH     = ex40.PETSc runex40 ex40.rm ex41.PETSc runex41 e
                                  ex138.PETSc runex138_1 runex138_2 ex138.rm \
                                  ex140.PETSc runex140 runex140_2 runex140_3 runex140_4 ex140.rm \
                                  ex100.PETSc runex100 ex100.rm ex125.PETSc runex125 ex125.rm \
-                                 ex163.PETSc runex163 runex163_2 ex163.rm ex169.PETSc runex169 ex169.rm ex171.PETSc runex171 ex171.rm \
+                                 ex173.PETSc runex173 ex173.rm ex163.PETSc runex163 runex163_2 ex163.rm ex169.PETSc runex169 ex169.rm ex171.PETSc runex171 ex171.rm \
                                  ex180.PETSc runex180 ex180.rm
 TESTEXAMPLES_FORTRAN_NOCOMPLEX = ex67f.PETSc runex67f ex67f.rm ex79f.PETSc runex79f ex79f.rm
 TESTEXAMPLES_F90	       = ex16f90.PETSc runex16f90 ex16f90.rm

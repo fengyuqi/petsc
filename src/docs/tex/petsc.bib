@@ -237,6 +237,24 @@ address = {Los Alamitos, CA},
   year={1997},
   publisher={Citeseer}
 }
+@article{spillane2011abstract,
+  title={Abstract robust coarse spaces for systems of {PDEs} via generalized eigenproblems in the overlaps},
+  author={Spillane, N and Dolean, V and Hauret, P and Nataf, F and Pechstein, C and Scheichl, R},
+  journal={NuMa-Report},
+  volume={7},
+  pages={2007},
+  year={2011}
+}
+
+@inproceedings{jolivet2013scalabledd,
+  title={Scalable domain decomposition preconditioners for heterogeneous elliptic problems},
+  author={Jolivet, Pierre and Hecht, Fr{\'e}d{\'e}ric and Nataf, Fr{\'e}d{\'e}ric and Prud'homme, Christophe},
+  booktitle={Proceedings of SC13: International Conference for High Performance Computing, Networking, Storage and Analysis},
+  pages={80},
+  year={2013},
+  organization={ACM}
+}
+
 @book{KS2000,
 	Author = {D. Kinderlehrer and G. Stampacchia},
 	Publisher = {Society for Industrial Mathematics},
@@ -1266,7 +1284,7 @@ address = {Los Alamitos, CA},
 }
 
 @Unpublished{petsc:use-by-external-packages,
-  author =       {B. {Smith et al.}},
+  author =       {B. F. {Smith et al.}},
   title =        "{Software Packages that Use or Interface to PETSc}",
   note =         "\url{http://www.mcs.anl.gov/petsc/publications/petscapps.html#packages}",
   Institution = "Argonne National Laboratory"
@@ -4025,7 +4043,7 @@ year = 2003}
   author =	 "Peter {Lichtner (PI)}",
   title =	 "Modeling Multiscale-Multiphase-Multicomponent Subsurface Reactive Flows
                   Using Advanced Computing",
-  url = "http://www.scidac.gov/groundwater/gwflow.html"
+  howpublished = "http://www.scidac.gov/groundwater/gwflow.html"
 }
 
 @misc{pflotran:web,
@@ -4311,6 +4329,17 @@ http://csdrm.caltech.edu/
   series = "Lecture Notes in Computer Science",
   volume = 2073,
   publisher = "Springer-Verlag",
+}
+
+@article{chen2008new,
+  title={New generation of multi-scale {NWP} system {(GRAPES)}: General scientific design},
+  author={Chen, DeHui and Xue, JiShan and Yang, XueSheng and Zhang, HongLiang and Shen, XueShun and Hu, JiangLin and Wang, Yu and Ji, LiRen and Chen, JiaBin},
+  journal={Chinese Science Bulletin},
+  volume={53},
+  number={22},
+  pages={3433--3445},
+  year={2008},
+  publisher={Springer}
 }
 
 @inproceedings{baum01,
@@ -5132,6 +5161,28 @@ It begins with a general introduction to bundles, including such topics as diffe
  address = {Philadelphia, PA}
 }
 
+@article{chartier2003spectral,
+  title={Spectral AMGe ($\rho$ AMGe)},
+  author={Chartier, Tim and Falgout, RD and Henson, VE and Jones, J and Manteuffel, T and McCormick, S and Ruge, J and Vassilevski, PS},
+  journal={SIAM Journal on Scientific Computing},
+  volume={25},
+  number={1},
+  pages={1--26},
+  year={2003},
+  publisher={SIAM}
+}
+
+@article{galvis2010domain,
+  title={Domain decomposition preconditioners for multiscale flows in high-contrast media},
+  author={Galvis, Juan and Efendiev, Yalchin},
+  journal={Multiscale Modeling \& Simulation},
+  volume={8},
+  number={4},
+  pages={1461--1483},
+  year={2010},
+  publisher={SIAM}
+}
+
 @book{BrennerScott02,
  author = {Susanne~C. Brenner and L.~Ridgway Scott},
  title = {The mathematical theory of finite element methods},
@@ -5940,7 +5991,7 @@ year = {1993}
 
 @article{MoresiZhongGurnis96,
   author  = {Louis N. Moresi and Shijie Zhong and Michael Gurnis},
-  title   = {The accuracy of finite element solutions of Stokes' flow with strongly varying viscosity},
+  title   = {The accuracy of finite element solutions of {S}tokes' flow with strongly varying viscosity},
   journal = {Physics of the Earth and Planetary Interiors},
   volume  = {97},
   pages   = {83-–94},
@@ -5949,7 +6000,7 @@ year = {1993}
 
 @article{MoresiSolomatov95,
   author  = {Louis N. Moresi and V. S. Solomatov},
-  title   = {Numerical investigation of 2D convection with extremely large viscosity variations},
+  title   = {Numerical investigation of {2D} convection with extremely large viscosity variations},
   journal = {Physics of Fluids},
   volume  = {7},
   number  = {9},
@@ -6327,7 +6378,16 @@ year      = {2011},
 pages     = {407-423},
 ee        = {http://dx.doi.org/10.1137/100791142}
 }
-	
+@article{chen2011algebraic,
+  title={Algebraic distance on graphs},
+  author={Chen, Jie and Safro, Ilya},
+  journal={SIAM Journal on Scientific Computing},
+  volume={33},
+  number={6},
+  pages={3468--3490},
+  year={2011},
+  publisher={SIAM}
+}
 @inproceedings{Adams04,
 	Author = {Adams, M.~F. and Bayraktar, H.~H. and Keaveny, T.~M. and Papadopoulos, P.},
 	Booktitle = {ACM/IEEE Proceedings of SC2004: High Performance Networking and Computing},
@@ -6465,9 +6525,9 @@ keywords = "Parallelization"
 @misc{elemental-web-page,
   author = {Jack Poulson},
   title  = {Elemental: Distributed memory dense linear algebra},
-  howpublished = {\url{http://code.google.com/p/elemental/}},
-  url    = {http://code.google.com/p/elemental/},
-  year   = {2012}
+  howpublished = {\url{http://libelemental.org}},
+  url    = {http://libelemental.org/},
+  year   = {2015}
 }
 
 @book{ScalesReport,
@@ -7668,7 +7728,7 @@ part I: Theory},
   publisher={Elsevier}
 }
 @article{ZhengEtAl12,
-  title   = {Implementation of a multigrid solver on GPU for Stokes equations with strongly variable viscosity based on Matlab and CUDA},
+  title   = {Implementation of a multigrid solver on {GPU} for {S}tokes equations with strongly variable viscosity based on {M}atlab and {CUDA}},
   author  = {Liang Zheng and Taras Gerya and Matthew G. Knepley and David A. Yuen and Huai Zhang and Yaolin Shi},
   journal = {IJHPCA},
   year    = {2012},
