@@ -35,8 +35,6 @@ runex1f90:
 	   else printf "${PWD}\nPossible problem with ex1f90_1, diffs above\n=========================================\n"; fi; \
 	   ${RM} -f ex1f90_1.tmp
 
-include ${PETSC_DIR}/lib/petsc-conf/variables
-include ${PETSC_DIR}/lib/petsc-conf/rules
 runex3_1:
 	-@${MPIEXEC} -n 1 ./ex3 > ex3.tmp 2>&1; \
 	   if (${DIFF} output/ex3_1_p1.out ex3.tmp) then true; \
