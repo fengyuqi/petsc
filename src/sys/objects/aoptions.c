@@ -371,6 +371,18 @@ PetscErrorCode PetscOptionsSAWsDestroy(void)
   PetscFunctionReturn(0);
 }
 
+static const char *OptionsHeader = "<head>\n"
+                                   "<script type=\"text/javascript\" src=\"http://www.mcs.anl.gov/research/projects/saws/js/jquery-1.9.1.js\"></script>\n"
+                                   "<script type=\"text/javascript\" src=\"http://www.mcs.anl.gov/research/projects/saws/js/SAWs.js\"></script>\n"
+                                   "<script type=\"text/javascript\" src=\"js/PETSc.js\"></script>\n"
+                                   "<script>\n"
+                                      "jQuery(document).ready(function() {\n"
+                                         "PETSc.getAndDisplayDirectory(null,\"#variablesInfo\")\n"
+                                      "})\n"
+                                  "</script>\n"
+                                  "</head>\n";
+static const char *OptionsBodyBottom = "<div id=\"variablesInfo\" style=\"height:550px;overflow:scroll;\"></div>\n<br>\n</body>";
+
 #undef __FUNCT__
 #define __FUNCT__ "PetscOptionsSAWsInput"
 /*
@@ -390,6 +402,7 @@ PetscErrorCode PetscOptionsSAWsInput(PetscOptions *PetscOptionsObject)
   static int     mancount = 0;
   char           options[16];
   PetscBool      changedmethod = PETSC_FALSE;
+  PetscBool      stopasking    = PETSC_FALSE;
   char           manname[16],textname[16];
   char           dir[1024];
 
@@ -403,6 +416,7 @@ PetscErrorCode PetscOptionsSAWsInput(PetscOptions *PetscOptionsObject)
   ierr = PetscSNPrintf(dir,1024,"/PETSc/Options/%s","prefix");CHKERRQ(ierr);
   PetscStackCallSAWs(SAWs_Register,(dir,&PetscOptionsObject->pprefix,1,SAWs_READ,SAWs_STRING));
   PetscStackCallSAWs(SAWs_Register,("/PETSc/Options/ChangedMethod",&changedmethod,1,SAWs_WRITE,SAWs_BOOLEAN));
+  PetscStackCallSAWs(SAWs_Register,("/PETSc/Options/StopAsking",&stopasking,1,SAWs_WRITE,SAWs_BOOLEAN));
 
   while (next) {
     sprintf(manname,"_man_%d",mancount);
@@ -461,7 +475,7 @@ PetscErrorCode PetscOptionsSAWsInput(PetscOptions *PetscOptionsObject)
       PetscInt ntext = next->nlist;
       ierr = PetscSNPrintf(dir,1024,"/PETSc/Options/%s",next->option);CHKERRQ(ierr);
       PetscStackCallSAWs(SAWs_Register,(dir,&next->data,1,SAWs_WRITE,SAWs_STRING));
-      ierr = PetscMalloc((ntext+1)*sizeof(char),&next->edata);CHKERRQ(ierr);
+      ierr = PetscMalloc1((ntext+1),(char***)&next->edata);CHKERRQ(ierr);
       ierr = PetscMemcpy(next->edata,next->list,ntext*sizeof(char*));CHKERRQ(ierr);
       PetscStackCallSAWs(SAWs_Set_Legal_Variable_Values,(dir,ntext,next->edata));
       }
@@ -473,7 +487,11 @@ PetscErrorCode PetscOptionsSAWsInput(PetscOptions *PetscOptionsObject)
   }
 
   /* wait until accessor has unlocked the memory */
+  PetscStackCallSAWs(SAWs_Push_Header,("index.html",OptionsHeader));
+  PetscStackCallSAWs(SAWs_Push_Body,("index.html",2,OptionsBodyBottom));
   ierr = PetscSAWsBlock();CHKERRQ(ierr);
+  PetscStackCallSAWs(SAWs_Pop_Header,("index.html"));
+  PetscStackCallSAWs(SAWs_Pop_Body,("index.html",2));
 
   /* determine if any values have been set in GUI */
   next = PetscOptionsObject->next;
@@ -485,6 +503,11 @@ PetscErrorCode PetscOptionsSAWsInput(PetscOptions *PetscOptionsObject)
 
   /* reset counter to -2; this updates the screen with the new options for the selected method */
   if (changedmethod) PetscOptionsObject->count = -2;
+
+  if (stopasking) {
+    PetscOptionsPublish      = PETSC_FALSE;
+    PetscOptionsObject->count = 0;//do not ask for same thing again
+  }
 
   PetscStackCallSAWs(SAWs_Delete,("/PETSc/Options"));
   PetscFunctionReturn(0);
@@ -700,14 +723,19 @@ $                 if (flg) {
 PetscErrorCode  PetscOptionsInt_Private(PetscOptions *PetscOptionsObject,const char opt[],const char text[],const char man[],PetscInt currentvalue,PetscInt *value,PetscBool  *set)
 {
   PetscErrorCode ierr;
-  PetscOption   amsopt;
-
+  PetscOption    amsopt;
+  PetscBool      wasset;
+  
   PetscFunctionBegin;
   if (!PetscOptionsObject->count) {
     ierr = PetscOptionsCreate_Private(PetscOptionsObject,opt,text,man,OPTION_INT,&amsopt);CHKERRQ(ierr);
     ierr = PetscMalloc(sizeof(PetscInt),&amsopt->data);CHKERRQ(ierr);
-
     *(PetscInt*)amsopt->data = currentvalue;
+
+    ierr = PetscOptionsGetInt(PetscOptionsObject->prefix,opt,&currentvalue,&wasset);CHKERRQ(ierr);
+    if (wasset) {
+      *(PetscInt*)amsopt->data = currentvalue;
+    }
   }
   ierr = PetscOptionsGetInt(PetscOptionsObject->prefix,opt,value,set);CHKERRQ(ierr);
   if (PetscOptionsObject->printhelp && PetscOptionsObject->count == 1 && !PetscOptionsObject->alreadyprinted) {
