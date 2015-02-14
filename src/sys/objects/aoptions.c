@@ -411,7 +411,7 @@ PetscErrorCode PetscOptionsSAWsInput(PetscOptions *PetscOptionsObject)
   /* the next line is a bug, this will only work if all processors are here, the comm passed in is ignored!!! */
   sprintf(options,"Options_%d",count++);
 
-  PetscOptionsObject->pprefix = PetscOptionsObject->prefix; /* AMS will change this, so cannot pass prefix directly */
+  PetscOptionsObject->pprefix = PetscOptionsObject->prefix; /* SAWs will change this, so cannot pass prefix directly */
 
   ierr = PetscSNPrintf(dir,1024,"/PETSc/Options/%s","_title");CHKERRQ(ierr);
   PetscStackCallSAWs(SAWs_Register,(dir,&PetscOptionsObject->title,1,SAWs_READ,SAWs_STRING));
@@ -537,7 +537,6 @@ PetscErrorCode PetscOptionsEnd_Private(PetscOptions *PetscOptionsObject)
   }
 
   ierr = PetscFree(PetscOptionsObject->title);CHKERRQ(ierr);
-  ierr = PetscFree(PetscOptionsObject->prefix);CHKERRQ(ierr);
 
   /* reset counter to -2; this updates the screen with the new options for the selected method */
   if (PetscOptionsObject->changedmethod) PetscOptionsObject->count = -2;
@@ -598,6 +597,7 @@ PetscErrorCode PetscOptionsEnd_Private(PetscOptions *PetscOptionsObject)
         break;
       case OPTION_STRING:
         ierr = PetscStrcpy(value,(char*)PetscOptionsObject->next->data);CHKERRQ(ierr);
+        break;
       case OPTION_STRING_ARRAY:
         sprintf(value,"%s",((char**)PetscOptionsObject->next->data)[0]);
         for (j=1; j<PetscOptionsObject->next->arraylength; j++) {
@@ -624,6 +624,7 @@ PetscErrorCode PetscOptionsEnd_Private(PetscOptions *PetscOptionsObject)
     PetscOptionsObject->next = PetscOptionsObject->next->next;
     ierr                    = PetscFree(last);CHKERRQ(ierr);
   }
+  ierr = PetscFree(PetscOptionsObject->prefix);CHKERRQ(ierr);
   PetscOptionsObject->next = 0;
   PetscFunctionReturn(0);
 }
@@ -1510,7 +1511,7 @@ PetscErrorCode  PetscOptionsBoolArray_Private(PetscOptions *PetscOptionsObject,c
 {
   PetscErrorCode ierr;
   PetscInt       i;
-  PetscOption   amsopt;
+  PetscOption    amsopt;
 
   PetscFunctionBegin;
   if (!PetscOptionsObject->count) {
