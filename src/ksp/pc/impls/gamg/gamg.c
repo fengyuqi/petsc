@@ -11,13 +11,13 @@ PetscLogEvent petsc_gamg_setup_events[NUM_SET];
 #endif
 
 #if defined PETSC_USE_LOG
-PetscLogEvent PC_GAMGGgraph_AGG;
-PetscLogEvent PC_GAMGGgraph_GEO;
+PetscLogEvent PC_GAMGGraph_AGG;
+PetscLogEvent PC_GAMGGraph_GEO;
 PetscLogEvent PC_GAMGCoarsen_AGG;
 PetscLogEvent PC_GAMGCoarsen_GEO;
 PetscLogEvent PC_GAMGProlongator_AGG;
 PetscLogEvent PC_GAMGProlongator_GEO;
-PetscLogEvent PC_GAMGOptprol_AGG;
+PetscLogEvent PC_GAMGOptProlongator_AGG;
 #endif
 
 #define GAMG_MAXLEVELS 30
@@ -95,8 +95,7 @@ static PetscErrorCode PCGAMGCreateLevel_GAMG(PC pc,Mat Amat_fine,PetscInt cr_bs,
   ierr = MatGetLocalSize(Cmat, &ncrs_eq, NULL);CHKERRQ(ierr);
   if (pc_gamg->data_cell_rows>0) {
     ncrs = pc_gamg->data_sz/pc_gamg->data_cell_cols/pc_gamg->data_cell_rows;
-  }
-  else {
+  } else {
     PetscInt  bs;
     ierr = MatGetBlockSize(Cmat, &bs);CHKERRQ(ierr);
     ncrs = ncrs_eq/bs;
@@ -604,9 +603,9 @@ PetscErrorCode PCSetUp_GAMG(PC pc)
         /* get new block size of coarse matrices */
         ierr = MatGetBlockSizes(Prol11, NULL, &bs);CHKERRQ(ierr);
 
-        if (pc_gamg->ops->optprol) {
+        if (pc_gamg->ops->optprolongator) {
           /* smooth */
-          ierr = pc_gamg->ops->optprol(pc, Aarr[level], &Prol11);CHKERRQ(ierr);
+          ierr = pc_gamg->ops->optprolongator(pc, Aarr[level], &Prol11);CHKERRQ(ierr);
         }
 
         Parr[level1] = Prol11;
@@ -1188,7 +1187,7 @@ static PetscErrorCode PCGAMGSetNlevels_GAMG(PC pc, PetscInt n)
 
    Input Parameters:
 +  pc - the preconditioner context
--  threshold - the threshold value, 0.0 is the lowest possible
+-  threshold - the threshold value, 0.0 means keep all nonzero entries in the graph; negative means keep even zero entries in the graph
 
    Options Database Key:
 .  -pc_gamg_threshold <threshold>
@@ -1328,6 +1327,23 @@ static PetscErrorCode PCGAMGSetType_GAMG(PC pc, PCGAMGType type)
 }
 
 #undef __FUNCT__
+#define __FUNCT__ "PCView_GAMG"
+static PetscErrorCode PCView_GAMG(PC pc,PetscViewer viewer)
+{
+  PetscErrorCode ierr;
+  PC_MG          *mg      = (PC_MG*)pc->data;
+  PC_GAMG        *pc_gamg = (PC_GAMG*)mg->innerctx;
+
+  PetscFunctionBegin;
+  ierr = PetscViewerASCIIPrintf(viewer,"    GAMG specific options\n");CHKERRQ(ierr);
+  ierr = PetscViewerASCIIPrintf(viewer,"      Threshold for dropping small values from graph %g\n",(double)pc_gamg->threshold);CHKERRQ(ierr);
+  if (pc_gamg->ops->view) {
+    ierr = (*pc_gamg->ops->view)(pc,viewer);CHKERRQ(ierr);
+  }
+  PetscFunctionReturn(0);
+}
+
+#undef __FUNCT__
 #define __FUNCT__ "PCSetFromOptions_GAMG"
 PetscErrorCode PCSetFromOptions_GAMG(PetscOptions *PetscOptionsObject,PC pc)
 {
@@ -1440,6 +1456,7 @@ PETSC_EXTERN PetscErrorCode PCCreate_GAMG(PC pc)
   pc->ops->setup          = PCSetUp_GAMG;
   pc->ops->reset          = PCReset_GAMG;
   pc->ops->destroy        = PCDestroy_GAMG;
+  mg->view                = PCView_GAMG;
 
   ierr = PetscObjectComposeFunction((PetscObject)pc,"PCGAMGSetProcEqLim_C",PCGAMGSetProcEqLim_GAMG);CHKERRQ(ierr);
   ierr = PetscObjectComposeFunction((PetscObject)pc,"PCGAMGSetCoarseEqLim_C",PCGAMGSetCoarseEqLim_GAMG);CHKERRQ(ierr);
@@ -1533,15 +1550,13 @@ PetscErrorCode PCGAMGInitializePackage(void)
   ierr = PetscRegisterFinalize(PCGAMGFinalizePackage);CHKERRQ(ierr);
 
   /* general events */
-#if defined PETSC_USE_LOG
-  ierr = PetscLogEventRegister("PCGAMGgraph_AGG", 0, &PC_GAMGGgraph_AGG);CHKERRQ(ierr);
-  ierr = PetscLogEventRegister("PCGAMGgraph_GEO", PC_CLASSID, &PC_GAMGGgraph_GEO);CHKERRQ(ierr);
-  ierr = PetscLogEventRegister("PCGAMGcoarse_AGG", PC_CLASSID, &PC_GAMGCoarsen_AGG);CHKERRQ(ierr);
-  ierr = PetscLogEventRegister("PCGAMGcoarse_GEO", PC_CLASSID, &PC_GAMGCoarsen_GEO);CHKERRQ(ierr);
+  ierr = PetscLogEventRegister("PCGAMGGraph_AGG", 0, &PC_GAMGGraph_AGG);CHKERRQ(ierr);
+  ierr = PetscLogEventRegister("PCGAMGGraph_GEO", PC_CLASSID, &PC_GAMGGraph_GEO);CHKERRQ(ierr);
+  ierr = PetscLogEventRegister("PCGAMGCoarse_AGG", PC_CLASSID, &PC_GAMGCoarsen_AGG);CHKERRQ(ierr);
+  ierr = PetscLogEventRegister("PCGAMGCoarse_GEO", PC_CLASSID, &PC_GAMGCoarsen_GEO);CHKERRQ(ierr);
   ierr = PetscLogEventRegister("PCGAMGProl_AGG", PC_CLASSID, &PC_GAMGProlongator_AGG);CHKERRQ(ierr);
   ierr = PetscLogEventRegister("PCGAMGProl_GEO", PC_CLASSID, &PC_GAMGProlongator_GEO);CHKERRQ(ierr);
-  ierr = PetscLogEventRegister("PCGAMGPOpt_AGG", PC_CLASSID, &PC_GAMGOptprol_AGG);CHKERRQ(ierr);
-#endif
+  ierr = PetscLogEventRegister("PCGAMGPOpt_AGG", PC_CLASSID, &PC_GAMGOptProlongator_AGG);CHKERRQ(ierr);
 
   PetscFunctionReturn(0);
 }

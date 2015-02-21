@@ -306,7 +306,6 @@ static PetscErrorCode smoothAggs(const Mat Gmat_2, /* base (squared) graph */
   PetscBool      isMPI;
   Mat_SeqAIJ     *matA_1, *matB_1=0, *matA_2, *matB_2=0;
   MPI_Comm       comm;
-  PetscMPIInt    rank,size;
   PetscInt       lid,*ii,*idx,ix,Iend,my0,kk,n,j;
   Mat_MPIAIJ     *mpimat_2 = 0, *mpimat_1=0;
   const PetscInt nloc      = Gmat_2->rmap->n;
@@ -317,8 +316,6 @@ static PetscErrorCode smoothAggs(const Mat Gmat_2, /* base (squared) graph */
 
   PetscFunctionBegin;
   ierr = PetscObjectGetComm((PetscObject)Gmat_2,&comm);CHKERRQ(ierr);
-  ierr = MPI_Comm_rank(comm, &rank);CHKERRQ(ierr);
-  ierr = MPI_Comm_size(comm, &size);CHKERRQ(ierr);
   ierr = MatGetOwnershipRange(Gmat_1,&my0,&Iend);CHKERRQ(ierr);
 
   if (PETSC_FALSE) {
@@ -708,7 +705,7 @@ static PetscErrorCode formProl0(const PetscCoarsenData *agg_llists, /* list from
   PetscErrorCode ierr;
   PetscInt       Istart,my0,Iend,nloc,clid,flid,aggID,kk,jj,ii,mm,ndone,nSelected,minsz,nghosts,out_data_stride;
   MPI_Comm       comm;
-  PetscMPIInt    rank, size;
+  PetscMPIInt    rank;
   PetscReal      *out_data;
   PetscCDPos     pos;
   GAMGHashTable  fgid_flid;
@@ -721,7 +718,6 @@ static PetscErrorCode formProl0(const PetscCoarsenData *agg_llists, /* list from
   PetscFunctionBegin;
   ierr = PetscObjectGetComm((PetscObject)a_Prol,&comm);CHKERRQ(ierr);
   ierr = MPI_Comm_rank(comm,&rank);CHKERRQ(ierr);
-  ierr = MPI_Comm_size(comm,&size);CHKERRQ(ierr);
   ierr = MatGetOwnershipRange(a_Prol, &Istart, &Iend);CHKERRQ(ierr);
   nloc = (Iend-Istart)/bs; my0 = Istart/bs;
   if ((Iend-Istart) % bs) SETERRQ3(PETSC_COMM_SELF,PETSC_ERR_PLIB,"Iend %D - Istart %d must be divisible by bs %D",Iend,Istart,bs);
@@ -880,9 +876,24 @@ static PetscErrorCode formProl0(const PetscCoarsenData *agg_llists, /* list from
   PetscFunctionReturn(0);
 }
 
+#undef __FUNCT__
+#define __FUNCT__ "PCView_GAMG_AGG"
+static PetscErrorCode PCView_GAMG_AGG(PC pc,PetscViewer viewer)
+{
+  PetscErrorCode ierr;
+  PC_MG          *mg      = (PC_MG*)pc->data;
+  PC_GAMG        *pc_gamg = (PC_GAMG*)mg->innerctx;
+  PC_GAMG_AGG    *pc_gamg_agg = (PC_GAMG_AGG*)pc_gamg->subctx;
+
+  PetscFunctionBegin;
+  ierr = PetscViewerASCIIPrintf(viewer,"      AGG specific options\n");CHKERRQ(ierr);
+  ierr = PetscViewerASCIIPrintf(viewer,"        Symmetric graph %s\n",pc_gamg_agg->sym_graph ? "true" : "false");CHKERRQ(ierr);
+  PetscFunctionReturn(0);
+}
+
 /* -------------------------------------------------------------------------- */
 /*
-   PCGAMGgraph_AGG
+   PCGAMGGraph_AGG
 
   Input Parameter:
    . pc - this
@@ -891,8 +902,8 @@ static PetscErrorCode formProl0(const PetscCoarsenData *agg_llists, /* list from
    . a_Gmat -
 */
 #undef __FUNCT__
-#define __FUNCT__ "PCGAMGgraph_AGG"
-PetscErrorCode PCGAMGgraph_AGG(PC pc,const Mat Amat,Mat *a_Gmat)
+#define __FUNCT__ "PCGAMGGraph_AGG"
+PetscErrorCode PCGAMGGraph_AGG(PC pc,const Mat Amat,Mat *a_Gmat)
 {
   PetscErrorCode            ierr;
   PC_MG                     *mg          = (PC_MG*)pc->data;
@@ -900,18 +911,13 @@ PetscErrorCode PCGAMGgraph_AGG(PC pc,const Mat Amat,Mat *a_Gmat)
   const PetscInt            verbose      = pc_gamg->verbose;
   const PetscReal           vfilter      = pc_gamg->threshold;
   PC_GAMG_AGG               *pc_gamg_agg = (PC_GAMG_AGG*)pc_gamg->subctx;
-  PetscMPIInt               rank,size;
   Mat                       Gmat;
   MPI_Comm                  comm;
   PetscBool /* set,flg , */ symm;
 
   PetscFunctionBegin;
   ierr = PetscObjectGetComm((PetscObject)Amat,&comm);CHKERRQ(ierr);
-#if defined PETSC_USE_LOG
-  ierr = PetscLogEventBegin(PC_GAMGGgraph_AGG,0,0,0,0);CHKERRQ(ierr);
-#endif
-  ierr = MPI_Comm_rank(comm, &rank);CHKERRQ(ierr);
-  ierr = MPI_Comm_size(comm, &size);CHKERRQ(ierr);
+  ierr = PetscLogEventBegin(PC_GAMGGraph_AGG,0,0,0,0);CHKERRQ(ierr);
 
   /* ierr = MatIsSymmetricKnown(Amat, &set, &flg);CHKERRQ(ierr); || !(set && flg) -- this causes lot of symm calls */
   symm = (PetscBool)(pc_gamg_agg->sym_graph); /* && !pc_gamg_agg->square_graph; */
@@ -921,9 +927,7 @@ PetscErrorCode PCGAMGgraph_AGG(PC pc,const Mat Amat,Mat *a_Gmat)
 
   *a_Gmat = Gmat;
 
-#if defined PETSC_USE_LOG
-  ierr = PetscLogEventEnd(PC_GAMGGgraph_AGG,0,0,0,0);CHKERRQ(ierr);
-#endif
+  ierr = PetscLogEventEnd(PC_GAMGGraph_AGG,0,0,0,0);CHKERRQ(ierr);
   PetscFunctionReturn(0);
 }
 
@@ -954,15 +958,12 @@ PetscErrorCode PCGAMGCoarsen_AGG(PC a_pc,Mat *a_Gmat1,PetscCoarsenData **agg_lis
   PetscBool      *bIndexSet;
   MatCoarsen     crs;
   MPI_Comm       comm;
-  PetscMPIInt    rank,size;
+  PetscMPIInt    rank;
 
   PetscFunctionBegin;
-#if defined PETSC_USE_LOG
   ierr = PetscLogEventBegin(PC_GAMGCoarsen_AGG,0,0,0,0);CHKERRQ(ierr);
-#endif
   ierr = PetscObjectGetComm((PetscObject)Gmat1,&comm);CHKERRQ(ierr);
   ierr = MPI_Comm_rank(comm, &rank);CHKERRQ(ierr);
-  ierr = MPI_Comm_size(comm, &size);CHKERRQ(ierr);
   ierr = MatGetLocalSize(Gmat1, &n, &m);CHKERRQ(ierr);
   ierr = MatGetBlockSize(Gmat1, &bs);CHKERRQ(ierr);
   if (bs != 1) SETERRQ1(PETSC_COMM_SELF,PETSC_ERR_PLIB,"bs %D must be 1",bs);
@@ -1042,9 +1043,7 @@ PetscErrorCode PCGAMGCoarsen_AGG(PC a_pc,Mat *a_Gmat1,PetscCoarsenData **agg_lis
       *a_Gmat1 = mat; /* output */
     }
   }
-#if defined PETSC_USE_LOG
   ierr = PetscLogEventEnd(PC_GAMGCoarsen_AGG,0,0,0,0);CHKERRQ(ierr);
-#endif
   if (verbose > 2) PetscPrintf(comm,"[%d]%s PCGAMGCoarsen_AGG done\n",rank,__FUNCT__);
   PetscFunctionReturn(0);
 }
@@ -1080,9 +1079,7 @@ PetscErrorCode PCGAMGProlongator_AGG(PC pc,const Mat Amat,const Mat Gmat,PetscCo
 
   PetscFunctionBegin;
   ierr = PetscObjectGetComm((PetscObject)Amat,&comm);CHKERRQ(ierr);
-#if defined PETSC_USE_LOG
   ierr = PetscLogEventBegin(PC_GAMGProlongator_AGG,0,0,0,0);CHKERRQ(ierr);
-#endif
   ierr = MPI_Comm_rank(comm, &rank);CHKERRQ(ierr);
   ierr = MPI_Comm_size(comm, &size);CHKERRQ(ierr);
   ierr = MatGetOwnershipRange(Amat, &Istart, &Iend);CHKERRQ(ierr);
@@ -1194,15 +1191,13 @@ PetscErrorCode PCGAMGProlongator_AGG(PC pc,const Mat Amat,const Mat Gmat,PetscCo
 
   *a_P_out = Prol;  /* out */
 
-#if defined PETSC_USE_LOG
   ierr = PetscLogEventEnd(PC_GAMGProlongator_AGG,0,0,0,0);CHKERRQ(ierr);
-#endif
   PetscFunctionReturn(0);
 }
 
 /* -------------------------------------------------------------------------- */
 /*
-   PCGAMGOptprol_AGG
+   PCGAMGOptProlongator_AGG
 
   Input Parameter:
    . pc - this
@@ -1211,8 +1206,8 @@ PetscErrorCode PCGAMGProlongator_AGG(PC pc,const Mat Amat,const Mat Gmat,PetscCo
    . a_P_out - prolongation operator to the next level
 */
 #undef __FUNCT__
-#define __FUNCT__ "PCGAMGOptprol_AGG"
-PetscErrorCode PCGAMGOptprol_AGG(PC pc,const Mat Amat,Mat *a_P)
+#define __FUNCT__ "PCGAMGOptProlongator_AGG"
+PetscErrorCode PCGAMGOptProlongator_AGG(PC pc,const Mat Amat,Mat *a_P)
 {
   PetscErrorCode ierr;
   PC_MG          *mg          = (PC_MG*)pc->data;
@@ -1220,17 +1215,12 @@ PetscErrorCode PCGAMGOptprol_AGG(PC pc,const Mat Amat,Mat *a_P)
   const PetscInt verbose      = pc_gamg->verbose;
   PC_GAMG_AGG    *pc_gamg_agg = (PC_GAMG_AGG*)pc_gamg->subctx;
   PetscInt       jj;
-  PetscMPIInt    rank,size;
   Mat            Prol  = *a_P;
   MPI_Comm       comm;
 
   PetscFunctionBegin;
   ierr = PetscObjectGetComm((PetscObject)Amat,&comm);CHKERRQ(ierr);
-#if defined PETSC_USE_LOG
-  ierr = PetscLogEventBegin(PC_GAMGOptprol_AGG,0,0,0,0);CHKERRQ(ierr);
-#endif
-  ierr = MPI_Comm_rank(comm, &rank);CHKERRQ(ierr);
-  ierr = MPI_Comm_size(comm, &size);CHKERRQ(ierr);
+  ierr = PetscLogEventBegin(PC_GAMGOptProlongator_AGG,0,0,0,0);CHKERRQ(ierr);
 
   /* smooth P0 */
   for (jj = 0; jj < pc_gamg_agg->nsmooths; jj++) {
@@ -1322,9 +1312,7 @@ PetscErrorCode PCGAMGOptprol_AGG(PC pc,const Mat Amat,Mat *a_P)
     ierr = PetscLogEventEnd(petsc_gamg_setup_events[SET9],0,0,0,0);CHKERRQ(ierr);
 #endif
   }
-#if defined PETSC_USE_LOG
-  ierr = PetscLogEventEnd(PC_GAMGOptprol_AGG,0,0,0,0);CHKERRQ(ierr);
-#endif
+  ierr = PetscLogEventEnd(PC_GAMGOptProlongator_AGG,0,0,0,0);CHKERRQ(ierr);
   *a_P = Prol;
   PetscFunctionReturn(0);
 }
@@ -1355,13 +1343,13 @@ PetscErrorCode  PCCreateGAMG_AGG(PC pc)
   /* reset does not do anything; setup not virtual */
 
   /* set internal function pointers */
-  pc_gamg->ops->graph       = PCGAMGgraph_AGG;
-  pc_gamg->ops->coarsen     = PCGAMGCoarsen_AGG;
-  pc_gamg->ops->prolongator = PCGAMGProlongator_AGG;
-  pc_gamg->ops->optprol     = PCGAMGOptprol_AGG;
-
+  pc_gamg->ops->graph             = PCGAMGGraph_AGG;
+  pc_gamg->ops->coarsen           = PCGAMGCoarsen_AGG;
+  pc_gamg->ops->prolongator       = PCGAMGProlongator_AGG;
+  pc_gamg->ops->optprolongator    = PCGAMGOptProlongator_AGG;
   pc_gamg->ops->createdefaultdata = PCSetData_AGG;
-
+  pc_gamg->ops->view              = PCView_GAMG_AGG;
+  
   ierr = PetscObjectComposeFunction((PetscObject)pc,"PCSetCoordinates_C",PCSetCoordinates_AGG);CHKERRQ(ierr);
   PetscFunctionReturn(0);
 }
