@@ -217,7 +217,7 @@ PetscErrorCode PCGAMGCreateGraph(const Mat Amat, Mat *a_Gmat)
 
 /* -------------------------------------------------------------------------- */
 /*
-   PCGAMGFilterGraph - filter graph and symetrize if needed
+   PCGAMGFilterGraph - filter (remove zero and possibly small values from the) graph and symetrize if needed
 
  Input Parameter:
  . vfilter - threshold paramter [0,1)
@@ -243,7 +243,7 @@ PetscErrorCode PCGAMGFilterGraph(Mat *a_Gmat,const PetscReal vfilter,const Petsc
 #if defined PETSC_GAMG_USE_LOG
   ierr = PetscLogEventBegin(petsc_gamg_setup_events[GRAPH],0,0,0,0);CHKERRQ(ierr);
 #endif
-  /* scale Gmat so filter works */
+  /* scale Gmat for all values between -1 and 1 */
   ierr = MatCreateVecs(Gmat, &diag, 0);CHKERRQ(ierr);
   ierr = MatGetDiagonal(Gmat, diag);CHKERRQ(ierr);
   ierr = VecReciprocal(diag);CHKERRQ(ierr);
@@ -274,7 +274,6 @@ PetscErrorCode PCGAMGFilterGraph(Mat *a_Gmat,const PetscReal vfilter,const Petsc
       for (jj = 0; jj<info.nz_used; jj++) avals[jj] = PetscAbsScalar(avals[jj]);
       ierr = MatSeqAIJRestoreArray(aij->B,&avals);CHKERRQ(ierr);
     }
-
 #if defined PETSC_GAMG_USE_LOG
     ierr = PetscLogEventEnd(petsc_gamg_setup_events[GRAPH],0,0,0,0);CHKERRQ(ierr);
 #endif
@@ -291,7 +290,7 @@ PetscErrorCode PCGAMGFilterGraph(Mat *a_Gmat,const PetscReal vfilter,const Petsc
     ierr = MatTranspose(Gmat, MAT_INITIAL_MATRIX, &matTrans);CHKERRQ(ierr);
   }
 
-  /* filter - dup zeros out matrix */
+  /* Determine upper bound on nonzeros needed in new filtered matrix */
   ierr = PetscMalloc2(nloc, &d_nnz,nloc, &o_nnz);CHKERRQ(ierr);
   for (Ii = Istart, jj = 0; Ii < Iend; Ii++, jj++) {
     ierr      = MatGetRow(Gmat,Ii,&ncols,NULL,NULL);CHKERRQ(ierr);
@@ -313,7 +312,7 @@ PetscErrorCode PCGAMGFilterGraph(Mat *a_Gmat,const PetscReal vfilter,const Petsc
     ierr = MatDestroy(&matTrans);CHKERRQ(ierr);
   } else {
     /* all entries are generated locally so MatAssembly will be slightly faster for large process counts */
-    //   ierr = MatSetOption(tGmat,MAT_NO_OFF_PROC_ENTRIES,PETSC_TRUE);CHKERRQ(ierr);
+    ierr = MatSetOption(tGmat,MAT_NO_OFF_PROC_ENTRIES,PETSC_TRUE);CHKERRQ(ierr);
   }
 
   for (Ii = Istart, nnz0 = nnz1 = 0; Ii < Iend; Ii++) {
@@ -418,12 +417,11 @@ PetscErrorCode PCGAMGGetDataWithGhosts(const Mat Gmat,const PetscInt data_sz,con
 }
 
 
-/* hash table stuff - simple, not dymanic, key >= 0, has table
+/*
  *
  *  GAMGTableCreate
  */
-/* avoid overflow */
-#define GAMG_HASH(key) ((((PetscInt)7)*key)%a_tab->size)
+
 #undef __FUNCT__
 #define __FUNCT__ "GAMGTableCreate"
 PetscErrorCode GAMGTableCreate(PetscInt a_size, GAMGHashTable *a_tab)
@@ -433,7 +431,6 @@ PetscErrorCode GAMGTableCreate(PetscInt a_size, GAMGHashTable *a_tab)
 
   PetscFunctionBegin;
   a_tab->size = a_size;
-
   ierr = PetscMalloc1(a_size, &a_tab->table);CHKERRQ(ierr);
   ierr = PetscMalloc1(a_size, &a_tab->data);CHKERRQ(ierr);
   for (kk=0; kk<a_size; kk++) a_tab->table[kk] = -1;
@@ -498,24 +495,3 @@ PetscErrorCode GAMGTableAdd(GAMGHashTable *a_tab, PetscInt a_key, PetscInt a_dat
   PetscFunctionReturn(0);
 }
 
-#undef __FUNCT__
-#define __FUNCT__ "GAMGTableFind"
-PetscErrorCode GAMGTableFind(GAMGHashTable *a_tab, PetscInt a_key, PetscInt *a_data)
-{
-  PetscInt kk,idx;
-
-  PetscFunctionBegin;
-  if (a_key<0) SETERRQ1(PETSC_COMM_SELF,PETSC_ERR_USER,"Negative key %d.",a_key);
-  for (kk = 0, idx = GAMG_HASH(a_key); kk < a_tab->size; kk++, idx = (idx==(a_tab->size-1)) ? 0 : idx + 1) {
-    if (a_tab->table[idx] == a_key) {
-      *a_data = a_tab->data[idx];
-      break;
-    } else if (a_tab->table[idx] == -1) {
-      /* not here */
-      *a_data = -1;
-      break;
-    }
-  }
-  if (kk==a_tab->size) SETERRQ1(PETSC_COMM_SELF,PETSC_ERR_USER,"key %d not found in table",a_key);
-  PetscFunctionReturn(0);
-}
