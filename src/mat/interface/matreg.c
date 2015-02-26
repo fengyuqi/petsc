@@ -11,6 +11,7 @@ PetscBool MatRegisterAllCalled = PETSC_FALSE;
 */
 PetscFunctionList MatList = 0;
 
+
 #undef __FUNCT__
 #define __FUNCT__ "MatSetType"
 /*@C
@@ -62,13 +63,9 @@ PetscErrorCode  MatSetType(Mat mat, MatType matype)
   ierr =  PetscFunctionListFind(MatList,matype,&r);CHKERRQ(ierr);
   if (!r) SETERRQ1(PETSC_COMM_SELF,PETSC_ERR_ARG_UNKNOWN_TYPE,"Unknown Mat type given: %s",matype);
 
-  /* free the old data structure if it existed */
-  if (mat->ops->destroy) {
-    ierr = (*mat->ops->destroy)(mat);CHKERRQ(ierr);
-
-    mat->ops->destroy = NULL;
+  if (((PetscObject)mat)->type_name) {
+    ierr = MatClear_Private(mat);CHKERRQ(ierr);
   }
-  mat->preallocated = PETSC_FALSE;
 
   /* create the new data structure */
   ierr = (*r)(mat);CHKERRQ(ierr);

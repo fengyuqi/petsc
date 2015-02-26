@@ -1011,6 +1011,44 @@ PetscErrorCode  MatLoad(Mat newmat,PetscViewer viewer)
 }
 
 #undef __FUNCT__
+#define __FUNCT__ "MatClear_Private"
+PetscErrorCode  MatClear_Private(Mat mat)
+{
+  PetscErrorCode ierr;
+
+  PetscFunctionBegin;
+  PetscValidHeaderSpecific(mat,MAT_CLASSID,1);
+
+
+  /* free the old data structure if it existed */
+  if (mat->ops->destroy) {
+    ierr = (*mat->ops->destroy)(mat);CHKERRQ(ierr);
+
+    mat->ops->destroy = NULL;
+  }
+  ierr = MatNullSpaceDestroy(&mat->nullsp);CHKERRQ(ierr);
+  ierr = MatNullSpaceDestroy(&mat->nearnullsp);CHKERRQ(ierr);
+
+  mat->preallocated = PETSC_FALSE;
+  mat->assembled = PETSC_FALSE;
+  mat->was_assembled = PETSC_FALSE;
+
+  /*
+     Increment, rather than reset these: the object is logically the same, so its logging and
+     state is inherited.  Furthermore, resetting makes it possible for the same state to be
+     obtained with a different structure, confusing the PC.
+  */
+  ++mat->nonzerostate;
+  ierr = PetscObjectStateIncrease((PetscObject)mat);CHKERRQ(ierr);
+
+  /* mat->spptr is cleared out by the impl-specific mat->ops->destroy() */
+
+  PetscFunctionReturn(0);
+}
+
+
+
+#undef __FUNCT__
 #define __FUNCT__ "MatDestroy"
 /*@
    MatDestroy - Frees space taken by a matrix.
@@ -9530,8 +9568,8 @@ PetscErrorCode  MatTransposeColoringCreate(Mat mat,ISColoring iscoloring,MatTran
 #undef __FUNCT__
 #define __FUNCT__ "MatGetNonzeroState"
 /*@
-      MatGetNonzeroState - Returns a 64 bit integer representing the current state of nonzeros in the matrix. If the 
-        matrix has had no new nonzero locations added to the matrix since the previous call then the value will be the 
+      MatGetNonzeroState - Returns a 64 bit integer representing the current state of nonzeros in the matrix. If the
+        matrix has had no new nonzero locations added to the matrix since the previous call then the value will be the
         same, otherwise it will be larger
 
      Not Collective
@@ -9542,7 +9580,7 @@ PetscErrorCode  MatTransposeColoringCreate(Mat mat,ISColoring iscoloring,MatTran
   Output Parameter:
 .    state - the current state
 
-  Notes: You can only compare states from two different calls to the SAME matrix, you cannot compare calls between 
+  Notes: You can only compare states from two different calls to the SAME matrix, you cannot compare calls between
          different matrices
 
   Level: intermediate
