@@ -930,22 +930,22 @@ class Framework(config.base.Configure, script.LanguageProcessor):
     return
 
   def parallelQueueEvaluation(self, depGraph):
-    import graph
+    import graph, script
     import Queue
     from threading import Thread
-    import sys
 
     # TODO Insert a cycle check
     todo = Queue.Queue()
     done = Queue.Queue()
-    numThreads  = 2
     numChildren = len(depGraph.vertices)
+    numThreads  = script.useThreads
     for child in graph.DirectedGraph.getRoots(depGraph):
       if not hasattr(child, '_configured'):
         #self.logPrint('PUSH %s to   TODO' % child.__class__.__module__)
         todo.put(child)
 
     def processChildren(num, q):
+      emsg = ''
       while 1:
         child = q.get() # Might have to indicate blocking
         ret = 1
@@ -1000,13 +1000,17 @@ class Framework(config.base.Configure, script.LanguageProcessor):
               +'        CONFIGURATION CRASH  (Please send configure.log to petsc-maint@mcs.anl.gov)\n' \
               +'*******************************************************************************\n'
           se  = str(e)
-        out = child.restoreLog()
         if ret:
-          print 'ERROR IN THREAD',msg
-          out += msg
+          self.logWrite(msg)
+          try:
+            import sys,traceback
+            traceback.print_tb(sys.exc_info()[2], file = self.log)
+          except: pass
+        out = child.restoreLog()
         # Udpate queue
-        done.put((ret, out, child))
+        done.put((ret, out, emsg, child))
         q.task_done()
+        if ret: break
       return
 
     # Set up some threads to fetch the enclosures
@@ -1016,13 +1020,14 @@ class Framework(config.base.Configure, script.LanguageProcessor):
       worker.start()
 
     while numChildren > 0:
-      ret, msg, vertex = done.get()
+      ret, msg, emsg, vertex = done.get()
       vertex._configured = 1
       numChildren = numChildren - 1
       #self.logPrint('POP  %s from DONE %d LEFT' % (vertex.__class__.__module__, numChildren))
       self.logWrite(msg)
       if ret:
-        raise RuntimeError('Exception in configure thread')
+        self.logWrite(emsg)
+        raise RuntimeError(emsg)
       for child in depGraph.outEdges[vertex]:
         push = True
         for v in depGraph.inEdges[child]:
