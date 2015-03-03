@@ -1049,6 +1049,7 @@ PetscErrorCode  PetscFinalize(void)
   }
 #endif
 
+#if !defined(PETSC_HAVE_THREADSAFETY)
   ierr = PetscOptionsGetBool(NULL,"-malloc_info",&flg2,NULL);CHKERRQ(ierr);
   if (!flg2) {
     flg2 = PETSC_FALSE;
@@ -1057,6 +1058,7 @@ PetscErrorCode  PetscFinalize(void)
   if (flg2) {
     ierr = PetscMemoryShowUsage(PETSC_VIEWER_STDOUT_WORLD,"Summary of Memory Usage in PETSc\n");CHKERRQ(ierr);
   }
+#endif
 
 #if defined(PETSC_USE_LOG)
   flg1 = PETSC_FALSE;
@@ -1235,6 +1237,7 @@ PetscErrorCode  PetscFinalize(void)
 
   ierr = PetscInfoAllow(PETSC_FALSE,NULL);CHKERRQ(ierr);
 
+#if !defined(PETSC_HAVE_THREADSAFETY)
   {
     char fname[PETSC_MAX_PATH_LEN];
     FILE *fd;
@@ -1293,6 +1296,7 @@ PetscErrorCode  PetscFinalize(void)
       ierr = PetscMallocDumpLog(stdout);CHKERRQ(ierr);
     }
   }
+#endif
 
 #if defined(PETSC_HAVE_CUDA)
   flg  = PETSC_TRUE;
