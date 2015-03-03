@@ -56,7 +56,7 @@ class Configure(config.package.GNUPackage):
       self.logPrint("Not checking sowing on user request\n")
       return
 
-    if self.petscclone.isClone:
+    if self.petscclone.isClone and hasattr(self.compilers, 'FC'):
       self.logPrint('PETSc clone, checking for Sowing \n')
       self.getExecutable('pdflatex', getFullPath = 1)
 
@@ -94,7 +94,7 @@ class Configure(config.package.GNUPackage):
 
       self.buildFortranStubs()
     else:
-      self.logPrint("Not a clone of PETSc, don't need Sowing\n")
+      self.logPrint("Not a clone of PETSc or no Fortran, don't need Sowing\n")
     return
 
   def buildFortranStubs(self):
