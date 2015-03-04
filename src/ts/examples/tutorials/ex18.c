@@ -574,6 +574,11 @@ static PetscErrorCode CreateMesh(MPI_Comm comm, AppCtx *user, DM *dm)
     ierr = DMPlexCreateFromFile(comm, filename, PETSC_TRUE, dm);CHKERRQ(ierr);
   }
   if (periodic) {for (d = 0; d < 3; ++d) maxCell[d] = 1.1*(L[d]/cells[d]); ierr = DMSetPeriodicity(*dm, maxCell, L, user->bd);CHKERRQ(ierr);}
+#if 0
+  /* Need FV adjacency */
+  ierr = DMPlexSetAdjacencyUseCone(*dm, PETSC_TRUE);CHKERRQ(ierr);
+  ierr = DMPlexSetAdjacencyUseClosure(*dm, PETSC_FALSE);CHKERRQ(ierr);
+#endif
   /* Distribute mesh */
   ierr = DMPlexDistribute(*dm, 0, NULL, &distributedMesh);CHKERRQ(ierr);
   if (distributedMesh) {
@@ -751,6 +756,7 @@ static PetscErrorCode SetupDiscretization(DM dm, AppCtx *user)
     /* Coordinates were never localized for coarse meshes */
     if (cdm) {ierr = DMPlexLocalizeCoordinates(cdm);CHKERRQ(ierr);}
   }
+  ierr = PetscDSViewFromOptions((PetscObject) prob, NULL, "-ds_view");CHKERRQ(ierr);
   ierr = PetscFEDestroy(&fe[0]);CHKERRQ(ierr);
   ierr = PetscFEDestroy(&fe[1]);CHKERRQ(ierr);
   ierr = PetscFVDestroy(&fv);CHKERRQ(ierr);
