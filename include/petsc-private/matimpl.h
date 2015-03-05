@@ -403,6 +403,9 @@ struct _p_Mat {
 
 PETSC_INTERN PetscErrorCode MatAXPY_Basic(Mat,PetscScalar,Mat,MatStructure);
 PETSC_INTERN PetscErrorCode MatAXPY_BasicWithPreallocation(Mat,Mat,PetscScalar,Mat,MatStructure);
+PETSC_INTERN PetscErrorCode MatClear_Private(Mat);
+
+
 /*
     Object for partitioning graphs
 */
