@@ -2562,7 +2562,7 @@ typedef enum {
   PETSC_BUILDTWOSIDED_NOTSET = -1,
   PETSC_BUILDTWOSIDED_ALLREDUCE = 0,
   PETSC_BUILDTWOSIDED_IBARRIER = 1,
-  PETSC_BUILDTWOSIDED_REDSCATTER = 2,
+  PETSC_BUILDTWOSIDED_REDSCATTER = 2
   /* Updates here must be accompanied by updates in petsc-finclude/petscsys.h and the string array in mpits.c */
 } PetscBuildTwoSidedType;
 PETSC_EXTERN const char *const PetscBuildTwoSidedTypes[];
