@@ -2964,7 +2964,7 @@ PetscErrorCode TSMonitorDefault(TS ts,PetscInt step,PetscReal ptime,Vec v,void *
 
   PetscFunctionBegin;
   ierr = PetscViewerASCIIAddTab(viewer,((PetscObject)ts)->tablevel);CHKERRQ(ierr);
-  ierr = PetscViewerASCIIPrintf(viewer,"%D TS dt %g time %g\n",step,(double)ts->time_step,(double)ptime);CHKERRQ(ierr);
+  ierr = PetscViewerASCIIPrintf(viewer,"%D TS dt %g time %g %s",step,(double)ts->time_step,(double)ptime,ts->steprollback ? "(r)\n" : "\n");CHKERRQ(ierr);
   ierr = PetscViewerASCIISubtractTab(viewer,((PetscObject)ts)->tablevel);CHKERRQ(ierr);
   PetscFunctionReturn(0);
 }
@@ -3101,6 +3101,7 @@ PetscErrorCode  TSStep(TS ts)
     else if (ts->ptime >= ts->max_time) ts->reason = TS_CONVERGED_TIME;
   }
   ts->total_steps++;
+  ts->steprollback = PETSC_FALSE;
   PetscFunctionReturn(0);
 }
 
@@ -3268,16 +3269,15 @@ PetscErrorCode TSSolve(TS ts,Vec u)
     /* steps the requested number of timesteps. */
     if (ts->steps >= ts->max_steps)     ts->reason = TS_CONVERGED_ITS;
     else if (ts->ptime >= ts->max_time) ts->reason = TS_CONVERGED_TIME;
+    ierr = TSTrajectorySet(ts->trajectory,ts,ts->steps,ts->ptime,ts->vec_sol);CHKERRQ(ierr);
     while (!ts->reason) {
       ierr = TSMonitor(ts,ts->steps,ts->ptime,ts->vec_sol);CHKERRQ(ierr);
-      ierr = TSTrajectorySet(ts->trajectory,ts,ts->steps,ts->ptime,ts->vec_sol);CHKERRQ(ierr);
       ierr = TSStep(ts);CHKERRQ(ierr);
       if (ts->event) {
 	ierr = TSEventMonitor(ts);CHKERRQ(ierr);
-	if (ts->event->status != TSEVENT_PROCESSING) {
-	  ierr = TSPostStep(ts);CHKERRQ(ierr);
-	}
-      } else {
+      }
+      if(!ts->steprollback) {
+	ierr = TSTrajectorySet(ts->trajectory,ts,ts->steps,ts->ptime,ts->vec_sol);CHKERRQ(ierr);
 	ierr = TSPostStep(ts);CHKERRQ(ierr);
       }
     }
@@ -3290,7 +3290,6 @@ PetscErrorCode TSSolve(TS ts,Vec u)
       ts->solvetime = ts->ptime;
       solution = ts->vec_sol;
     }
-    ierr = TSTrajectorySet(ts->trajectory,ts,ts->steps,ts->solvetime,solution);CHKERRQ(ierr);
     ierr = TSMonitor(ts,ts->steps,ts->solvetime,solution);CHKERRQ(ierr);
     ierr = VecViewFromOptions(solution, ((PetscObject) ts)->prefix, "-ts_view_solution");CHKERRQ(ierr);
   }
@@ -3344,13 +3343,17 @@ PetscErrorCode TSAdjointSolve(TS ts)
     ierr = TSMonitor(ts,ts->adjoint_max_steps-ts->steps,ts->ptime,ts->vec_sol);CHKERRQ(ierr);
     ierr = TSAdjointStep(ts);CHKERRQ(ierr);
     if (ts->event) {
-      ierr = TSEventMonitor(ts);CHKERRQ(ierr);
+      ierr = TSAdjointEventMonitor(ts);CHKERRQ(ierr);
+    }
+
+#if 0 /* I don't think PostStep is needed in AdjointSolve */
       if (ts->event->status != TSEVENT_PROCESSING) {
         ierr = TSPostStep(ts);CHKERRQ(ierr);
       }
     } else {
       ierr = TSPostStep(ts);CHKERRQ(ierr);
     }
+#endif
   }
   ts->solvetime = ts->ptime;
   PetscFunctionReturn(0);
@@ -5968,6 +5971,7 @@ PetscErrorCode  TSRollBack(TS ts)
   ierr = (*ts->ops->rollback)(ts);CHKERRQ(ierr);
   ts->time_step = ts->ptime - ts->ptime_prev;
   ts->ptime = ts->ptime_prev;
+  ts->steprollback = PETSC_TRUE; /* Flag to indicate that the step is rollbacked */
   PetscFunctionReturn(0);
 }
 
