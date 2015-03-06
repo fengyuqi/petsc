@@ -55,7 +55,8 @@ struct _n_TSMonitorDrawCtx {
 .  -ts_monitor_draw_solution_phase  <xleft,yleft,xright,yright> - Monitor solution graphically with phase diagram, requires problem with exactly 2 degrees of freedom
 .  -ts_monitor_draw_error - Monitor error graphically, requires use to have provided TSSetSolutionFunction()
 .  -ts_monitor_solution_binary <filename> - Save each solution to a binary file
--  -ts_monitor_solution_vtk <filename.vts> - Save each time step to a binary file, use filename-%%03D.vts
+.  -ts_monitor_solution_vtk <filename.vts> - Save each time step to a binary file, use filename-%%03D.vts
+-  -ts_monitor_envelope - determine maximum and minimum value of each component of the solution over the solution time
 
    Developer Note: We should unify all the -ts_monitor options in the way that -xxx_view has been unified
 
@@ -315,6 +316,14 @@ PetscErrorCode  TSSetFromOptions(TS ts)
     tdm->ijacobianctx = NULL;
     ierr = TSSetIJacobian(ts, NULL, NULL, TSComputeIJacobianDefaultColor, 0);CHKERRQ(ierr);
     ierr = PetscInfo(ts, "Setting default finite difference coloring Jacobian matrix\n");CHKERRQ(ierr);
+  }
+
+  ierr = PetscOptionsName("-ts_monitor_envelope","Monitor maximum and minimum value of each component of the solution","TSMonitorEnvelope",&opt);CHKERRQ(ierr);
+  if (opt) {
+    TSMonitorEnvelopeCtx ctx;
+
+    ierr = TSMonitorEnvelopeCtxCreate(ts,&ctx);CHKERRQ(ierr);
+    ierr = TSMonitorSet(ts,TSMonitorEnvelope,ctx,(PetscErrorCode (*)(void**))TSMonitorEnvelopeCtxDestroy);CHKERRQ(ierr);
   }
 
   /*
@@ -3235,7 +3244,7 @@ PetscErrorCode TSSolve(TS ts,Vec u)
   } else if (u) {
     ierr = TSSetSolution(ts,u);CHKERRQ(ierr);
   }
-  ierr = TSSetUp(ts);CHKERRQ(ierr); /*compute adj coefficients if the reverse mode is on*/
+  ierr = TSSetUp(ts);CHKERRQ(ierr);
   /* reset time step and iteration counters */
   ts->steps             = 0;
   ts->ksp_its           = 0;
@@ -3488,6 +3497,10 @@ PetscErrorCode  TSMonitorLGCtxDestroy(TSMonitorLGCtx *ctx)
   ierr = PetscDrawLGGetDraw((*ctx)->lg,&draw);CHKERRQ(ierr);
   ierr = PetscDrawDestroy(&draw);CHKERRQ(ierr);
   ierr = PetscDrawLGDestroy(&(*ctx)->lg);CHKERRQ(ierr);
+  ierr = PetscStrArrayDestroy(&(*ctx)->names);CHKERRQ(ierr);
+  ierr = PetscStrArrayDestroy(&(*ctx)->displaynames);CHKERRQ(ierr);
+  ierr = PetscFree((*ctx)->displayvariables);CHKERRQ(ierr);
+  ierr = PetscFree((*ctx)->displayvalues);CHKERRQ(ierr);
   ierr = PetscFree(*ctx);CHKERRQ(ierr);
   PetscFunctionReturn(0);
 }
@@ -3782,7 +3795,7 @@ PetscErrorCode  TSGetIJacobian(TS ts,Mat *Amat,Mat *Pmat,TSIJacobian *f,void **c
    Options Database:
 .   -ts_monitor_draw_solution_initial - show initial solution as well as current solution
 
-   Notes: the initial solution and current solution are not displayed with a common axis scaling so generally the option -ts_monitor_draw_solution_initial
+   Notes: the initial solution and current solution are not display with a common axis scaling so generally the option -ts_monitor_draw_solution_initial
        will look bad
 
    Level: intermediate
@@ -5375,8 +5388,6 @@ PetscErrorCode  TSMonitorSetMatlab(TS ts,const char *func,mxArray *ctx)
 }
 #endif
 
-
-
 #undef __FUNCT__
 #define __FUNCT__ "TSMonitorLGSolution"
 /*@C
@@ -5390,6 +5401,9 @@ PetscErrorCode  TSMonitorSetMatlab(TS ts,const char *func,mxArray *ctx)
 .  step - current time-step
 .  ptime - current time
 -  lg - a line graph object
+
+   Options Database:
+.   -ts_lg_monitor_solution_variables
 
    Level: intermediate
 
@@ -5405,33 +5419,227 @@ PetscErrorCode  TSMonitorLGSolution(TS ts,PetscInt step,PetscReal ptime,Vec u,vo
   TSMonitorLGCtx    ctx = (TSMonitorLGCtx)dummy;
   const PetscScalar *yy;
   PetscInt          dim;
+  Vec               v;
 
   PetscFunctionBegin;
   if (!step) {
     PetscDrawAxis axis;
     ierr = PetscDrawLGGetAxis(ctx->lg,&axis);CHKERRQ(ierr);
     ierr = PetscDrawAxisSetLabels(axis,"Solution as function of time","Time","Solution");CHKERRQ(ierr);
-    ierr = VecGetLocalSize(u,&dim);CHKERRQ(ierr);
-    ierr = PetscDrawLGSetDimension(ctx->lg,dim);CHKERRQ(ierr);
+    if (ctx->names && !ctx->displaynames) {
+      char      **displaynames;
+      PetscBool flg;
+
+      ierr = VecGetLocalSize(u,&dim);CHKERRQ(ierr);
+      ierr = PetscMalloc((dim+1)*sizeof(char*),&displaynames);CHKERRQ(ierr);
+      ierr = PetscMemzero(displaynames,(dim+1)*sizeof(char*));CHKERRQ(ierr);
+      ierr = PetscOptionsGetStringArray(((PetscObject)ts)->prefix,"-ts_lg_monitor_solution_variables",displaynames,&dim,&flg);CHKERRQ(ierr);
+      if (flg) {
+        ierr = TSMonitorLGSetDisplayVariables(ts,(const char *const *)displaynames);CHKERRQ(ierr);
+      }
+      ierr = PetscStrArrayDestroy(&displaynames);CHKERRQ(ierr);
+    }
+    if (ctx->displaynames) {
+      ierr = PetscDrawLGSetDimension(ctx->lg,ctx->ndisplayvariables);CHKERRQ(ierr);
+      ierr = PetscDrawLGSetLegend(ctx->lg,(const char *const *)ctx->displaynames);CHKERRQ(ierr);
+    } else if (ctx->names) {
+      ierr = VecGetLocalSize(u,&dim);CHKERRQ(ierr);
+      ierr = PetscDrawLGSetDimension(ctx->lg,dim);CHKERRQ(ierr);
+      ierr = PetscDrawLGSetLegend(ctx->lg,(const char *const *)ctx->names);CHKERRQ(ierr);
+    }
     ierr = PetscDrawLGReset(ctx->lg);CHKERRQ(ierr);
   }
-  ierr = VecGetArrayRead(u,&yy);CHKERRQ(ierr);
+  if (ctx->transform) {
+    ierr = VecDuplicate(u,&v);CHKERRQ(ierr);
+    ierr = (*ctx->transform)(ctx->transformctx,u,v);CHKERRQ(ierr);
+  } else {
+    v = u;
+  }
+  ierr = VecGetArrayRead(v,&yy);CHKERRQ(ierr);
 #if defined(PETSC_USE_COMPLEX)
   {
     PetscReal *yreal;
     PetscInt  i,n;
-    ierr = VecGetLocalSize(u,&n);CHKERRQ(ierr);
+    ierr = VecGetLocalSize(v,&n);CHKERRQ(ierr);
     ierr = PetscMalloc1(n,&yreal);CHKERRQ(ierr);
     for (i=0; i<n; i++) yreal[i] = PetscRealPart(yy[i]);
     ierr = PetscDrawLGAddCommonPoint(ctx->lg,ptime,yreal);CHKERRQ(ierr);
     ierr = PetscFree(yreal);CHKERRQ(ierr);
   }
 #else
-  ierr = PetscDrawLGAddCommonPoint(ctx->lg,ptime,yy);CHKERRQ(ierr);
+  if (ctx->displaynames) {
+    PetscInt i;
+    for (i=0; i<ctx->ndisplayvariables; i++) {
+      ctx->displayvalues[i] = yy[ctx->displayvariables[i]];
+    }
+    ierr = PetscDrawLGAddCommonPoint(ctx->lg,ptime,ctx->displayvalues);CHKERRQ(ierr);
+  } else {
+    ierr = PetscDrawLGAddCommonPoint(ctx->lg,ptime,yy);CHKERRQ(ierr);
+  }
 #endif
-  ierr = VecRestoreArrayRead(u,&yy);CHKERRQ(ierr);
+  ierr = VecRestoreArrayRead(v,&yy);CHKERRQ(ierr);
+  if (ctx->transform) {
+    ierr = VecDestroy(&v);CHKERRQ(ierr);
+  }
   if (((ctx->howoften > 0) && (!(step % ctx->howoften))) || ((ctx->howoften == -1) && ts->reason)) {
     ierr = PetscDrawLGDraw(ctx->lg);CHKERRQ(ierr);
+  }
+  PetscFunctionReturn(0);
+}
+
+
+#undef __FUNCT__
+#define __FUNCT__ "TSMonitorLGSetVariableNames"
+/*@C
+   TSMonitorLGSetVariableNames - Sets the name of each component in the solution vector so that it may be displayed in the plot
+
+   Collective on TS
+
+   Input Parameters:
++  ts - the TS context
+-  names - the names of the components, final string must be NULL
+
+   Level: intermediate
+
+.keywords: TS,  vector, monitor, view
+
+.seealso: TSMonitorSet(), TSMonitorDefault(), VecView(), TSMonitorLGSetDisplayVariables()
+@*/
+PetscErrorCode  TSMonitorLGSetVariableNames(TS ts,const char * const *names)
+{
+  PetscErrorCode    ierr;
+  PetscInt          i;
+
+  PetscFunctionBegin;
+  for (i=0; i<ts->numbermonitors; i++) {
+    if (ts->monitor[i] == TSMonitorLGSolution) {
+      TSMonitorLGCtx  ctx = ts->monitorcontext[i];
+      ierr = PetscStrArrayDestroy(&ctx->names);CHKERRQ(ierr);
+      ierr = PetscStrArrayallocpy(names,&ctx->names);CHKERRQ(ierr);
+      break;
+    }
+  }
+  PetscFunctionReturn(0);
+}
+
+#undef __FUNCT__
+#define __FUNCT__ "TSMonitorLGGetVariableNames"
+/*@C
+   TSMonitorLGGetVariableNames - Gets the name of each component in the solution vector so that it may be displayed in the plot
+
+   Collective on TS
+
+   Input Parameter:
+.  ts - the TS context
+
+   Output Parameter:
+.  names - the names of the components, final string must be NULL
+
+   Level: intermediate
+
+.keywords: TS,  vector, monitor, view
+
+.seealso: TSMonitorSet(), TSMonitorDefault(), VecView(), TSMonitorLGSetDisplayVariables()
+@*/
+PetscErrorCode  TSMonitorLGGetVariableNames(TS ts,const char *const **names)
+{
+  PetscInt       i;
+
+  PetscFunctionBegin;
+  *names = NULL;
+  for (i=0; i<ts->numbermonitors; i++) {
+    if (ts->monitor[i] == TSMonitorLGSolution) {
+      TSMonitorLGCtx  ctx = ts->monitorcontext[i];
+      *names = (const char *const *)ctx->names;
+      break;
+    }
+  }
+  PetscFunctionReturn(0);
+}
+
+#undef __FUNCT__
+#define __FUNCT__ "TSMonitorLGSetDisplayVariables"
+/*@C
+   TSMonitorLGSetDisplayVariables - Sets the variables that are to be display in the monitor
+
+   Collective on TS
+
+   Input Parameters:
++  ts - the TS context
+.  displaynames - the names of the components, final string must be NULL
+
+   Level: intermediate
+
+.keywords: TS,  vector, monitor, view
+
+.seealso: TSMonitorSet(), TSMonitorDefault(), VecView(), TSMonitorLGSetVariableNames()
+@*/
+PetscErrorCode  TSMonitorLGSetDisplayVariables(TS ts,const char * const *displaynames)
+{
+  PetscInt          i,j = 0,k;
+  PetscErrorCode    ierr;
+
+  PetscFunctionBegin;
+  for (i=0; i<ts->numbermonitors; i++) {
+    if (ts->monitor[i] == TSMonitorLGSolution) {
+      TSMonitorLGCtx  ctx = ts->monitorcontext[i];
+
+      if (!ctx->names) PetscFunctionReturn(0);
+      ierr = PetscStrArrayDestroy(&ctx->displaynames);CHKERRQ(ierr);
+      ierr = PetscStrArrayallocpy(displaynames,&ctx->displaynames);CHKERRQ(ierr);
+      while (displaynames[j]) j++;
+      ctx->ndisplayvariables = j;
+      ierr = PetscMalloc(ctx->ndisplayvariables*sizeof(PetscInt),&ctx->displayvariables);CHKERRQ(ierr);
+      ierr = PetscMalloc(ctx->ndisplayvariables*sizeof(PetscReal),&ctx->displayvalues);CHKERRQ(ierr);
+      j = 0; 
+      while (displaynames[j]) {
+        k = 0;
+        while (ctx->names[k]) {
+          PetscBool flg;
+          ierr = PetscStrcmp(displaynames[j],ctx->names[k],&flg);CHKERRQ(ierr);
+          if (flg) {
+            ctx->displayvariables[j] = k;
+            break;
+          }
+          k++;
+        }
+        j++;
+      }
+      break;
+    }
+  }
+  PetscFunctionReturn(0);
+}
+
+#undef __FUNCT__
+#define __FUNCT__ "TSMonitorLGSetTransform"
+/*@C
+   TSMonitorLGSetTransform - Solution vector will be transformed by provided function before being displayed
+
+   Collective on TS
+
+   Input Parameters:
++  ts - the TS context
+.  transform - the transform function
+-  ctx - optional context used by transform function
+
+   Level: intermediate
+
+.keywords: TS,  vector, monitor, view
+
+.seealso: TSMonitorSet(), TSMonitorDefault(), VecView(), TSMonitorLGSetVariableNames()
+@*/
+PetscErrorCode  TSMonitorLGSetTransform(TS ts,PetscErrorCode (*transform)(void*,Vec,Vec),void *tctx)
+{
+  PetscInt          i;
+
+  PetscFunctionBegin;
+  for (i=0; i<ts->numbermonitors; i++) {
+    if (ts->monitor[i] == TSMonitorLGSolution) {
+      TSMonitorLGCtx  ctx = ts->monitorcontext[i];
+      ctx->transform    = transform;
+      ctx->transformctx = tctx;
+    }
   }
   PetscFunctionReturn(0);
 }
@@ -5592,6 +5800,144 @@ PetscErrorCode TSComputeLinearStability(TS ts,PetscReal xr,PetscReal xi,PetscRea
   PetscValidHeaderSpecific(ts,TS_CLASSID,1);
   if (!ts->ops->linearstability) SETERRQ(PetscObjectComm((PetscObject)ts),PETSC_ERR_SUP,"Linearized stability function not provided for this method");
   ierr = (*ts->ops->linearstability)(ts,xr,xi,yr,yi);CHKERRQ(ierr);
+  PetscFunctionReturn(0);
+}
+
+/* ------------------------------------------------------------------------*/
+#undef __FUNCT__
+#define __FUNCT__ "TSMonitorEnvelopeCtxCreate"
+/*@C
+   TSMonitorEnvelopeCtxCreate - Creates a context for use with TSMonitorEnvelope()
+
+   Collective on TS
+
+   Input Parameters:
+.  ts  - the ODE solver object
+
+   Output Parameter:
+.  ctx - the context
+
+   Level: intermediate
+
+.keywords: TS, monitor, line graph, residual, seealso
+
+.seealso: TSMonitorLGTimeStep(), TSMonitorSet(), TSMonitorLGSolution(), TSMonitorLGError()
+
+@*/
+PetscErrorCode  TSMonitorEnvelopeCtxCreate(TS ts,TSMonitorEnvelopeCtx *ctx)
+{
+  PetscErrorCode ierr;
+
+  PetscFunctionBegin;
+  ierr = PetscNew(ctx);CHKERRQ(ierr);
+  PetscFunctionReturn(0);
+}
+
+#undef __FUNCT__
+#define __FUNCT__ "TSMonitorEnvelope"
+/*@C
+   TSMonitorEnvelope - Monitors the maximum and minimum value of each component of the solution
+
+   Collective on TS
+
+   Input Parameters:
++  ts - the TS context
+.  step - current time-step
+.  ptime - current time
+-  ctx - the envelope context
+
+   Options Database:
+.  -ts_monitor_envelope
+
+   Level: intermediate
+
+   Notes: after a solve you can use TSMonitorEnvelopeGetBounds() to access the envelope
+
+.keywords: TS,  vector, monitor, view
+
+.seealso: TSMonitorSet(), TSMonitorDefault(), VecView(), TSMonitorEnvelopeGetBounds()
+@*/
+PetscErrorCode  TSMonitorEnvelope(TS ts,PetscInt step,PetscReal ptime,Vec u,void *dummy)
+{
+  PetscErrorCode       ierr;
+  TSMonitorEnvelopeCtx ctx = (TSMonitorEnvelopeCtx)dummy;
+
+  PetscFunctionBegin;
+  if (!ctx->max) {
+    ierr = VecDuplicate(u,&ctx->max);CHKERRQ(ierr);
+    ierr = VecDuplicate(u,&ctx->min);CHKERRQ(ierr);
+    ierr = VecCopy(u,ctx->max);CHKERRQ(ierr);
+    ierr = VecCopy(u,ctx->min);CHKERRQ(ierr);
+  } else {
+    ierr = VecPointwiseMax(ctx->max,u,ctx->max);CHKERRQ(ierr);
+    ierr = VecPointwiseMin(ctx->min,u,ctx->min);CHKERRQ(ierr);
+  }
+  PetscFunctionReturn(0);
+}
+
+
+#undef __FUNCT__
+#define __FUNCT__ "TSMonitorEnvelopeGetBounds"
+/*@C
+   TSMonitorEnvelopeGetBounds - Gets the bounds for the components of the solution
+
+   Collective on TS
+
+   Input Parameter:
+.  ts - the TS context
+
+   Output Parameter:
++  max - the maximum values
+-  min - the minimum values
+
+   Level: intermediate
+
+.keywords: TS,  vector, monitor, view
+
+.seealso: TSMonitorSet(), TSMonitorDefault(), VecView(), TSMonitorLGSetDisplayVariables()
+@*/
+PetscErrorCode  TSMonitorEnvelopeGetBounds(TS ts,Vec *max,Vec *min)
+{
+  PetscInt i;
+
+  PetscFunctionBegin;
+  if (max) *max = NULL;
+  if (min) *min = NULL;
+  for (i=0; i<ts->numbermonitors; i++) {
+    if (ts->monitor[i] == TSMonitorEnvelope) {
+      TSMonitorEnvelopeCtx  ctx = ts->monitorcontext[i];
+      if (max) *max = ctx->max;
+      if (min) *min = ctx->min;
+      break;
+    }
+  }
+  PetscFunctionReturn(0);
+}
+
+#undef __FUNCT__
+#define __FUNCT__ "TSMonitorEnvelopeCtxDestroy"
+/*@C
+   TSMonitorEnvelopeCtxDestroy - Destroys a context that was created  with TSMonitorEnvelopeCtxCreate().
+
+   Collective on TSMonitorEnvelopeCtx
+
+   Input Parameter:
+.  ctx - the monitor context
+
+   Level: intermediate
+
+.keywords: TS, monitor, line graph, destroy
+
+.seealso: TSMonitorLGCtxCreate(),  TSMonitorSet(), TSMonitorLGTimeStep();
+@*/
+PetscErrorCode  TSMonitorEnvelopeCtxDestroy(TSMonitorEnvelopeCtx *ctx)
+{
+  PetscErrorCode ierr;
+
+  PetscFunctionBegin;
+  ierr = VecDestroy(&(*ctx)->min);CHKERRQ(ierr);
+  ierr = VecDestroy(&(*ctx)->max);CHKERRQ(ierr);
+  ierr = PetscFree(*ctx);CHKERRQ(ierr);
   PetscFunctionReturn(0);
 }
 

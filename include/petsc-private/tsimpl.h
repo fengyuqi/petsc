@@ -281,9 +281,20 @@ typedef enum {TS_STEP_INCOMPLETE, /* vec_sol, ptime, etc point to beginning of s
 } TSStepStatus;
 
 struct _n_TSMonitorLGCtx {
-  PetscDrawLG lg;
-  PetscInt    howoften;  /* when > 0 uses step % howoften, when negative only final solution plotted */
-  PetscInt    ksp_its,snes_its;
+  PetscDrawLG    lg;
+  PetscInt       howoften;  /* when > 0 uses step % howoften, when negative only final solution plotted */
+  PetscInt       ksp_its,snes_its;
+  char           **names;
+  char           **displaynames;
+  PetscInt       ndisplayvariables;
+  PetscBool      *displayvariables;
+  PetscReal      *displayvalues;
+  PetscErrorCode (*transform)(void*,Vec,Vec);
+  void           *transformctx;
+};
+
+struct _n_TSMonitorEnvelopeCtx {
+  Vec max,min;
 };
 
 
